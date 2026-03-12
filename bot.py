@@ -4,6 +4,12 @@
 import logging
 import asyncio
 import sys
+import time
+
+# Аварийный вывод, который будет виден в любых логах
+print("🚨 АВАРИЙНЫЙ ВЫВОД: бот пытается запуститься", file=sys.stderr)
+sys.stderr.flush()
+time.sleep(1)  # Даём время, чтобы вывод точно записался
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram import __version__ as TG_VER
 
