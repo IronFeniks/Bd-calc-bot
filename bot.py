@@ -6,14 +6,19 @@ import sys
 import os
 import subprocess
 
-# Проверка openpyxl
+# Проверка версии openpyxl
 try:
     import openpyxl
-    print(f"✅ openpyxl версия: {openpyxl.__version__}")
+    if openpyxl.__version__ < '3.1.5':
+        print(f"⚠️ openpyxl версия {openpyxl.__version__} ниже требуемой. Обновляю...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', 'openpyxl==3.1.5'])
+        print("✅ openpyxl обновлён до 3.1.5")
+    else:
+        print(f"✅ openpyxl версия: {openpyxl.__version__}")
 except ImportError:
     print("❌ openpyxl не найден. Устанавливаю...")
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'openpyxl==3.1.2'])
-    print("✅ openpyxl установлен")
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'openpyxl==3.1.5'])
+
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config import BOT_TOKEN, ADMIN_IDS, DATA_DIR, EXCEL_FILE
