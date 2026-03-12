@@ -120,8 +120,3 @@ def material_detail_keyboard(user_id, material_code):
         [InlineKeyboardButton("🔙 К списку", callback_data=f"user_{user_id}_back_to_materials")]
     ]
     return InlineKeyboardMarkup(keyboard)
-
-def noop_keyboard():
-    """Пустая клавиатура (заглушка)"""
-    keyboard = [[InlineKeyboardButton("⏳ Загрузка...", callback_data="noop")]]
-    return InlineKeyboardMarkup(keyboard)
