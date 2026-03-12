@@ -2,13 +2,15 @@ import pandas as pd
 import os
 import tempfile
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from drive_client import GoogleDriveClient
 from config import FILE_ID
 
 logger = logging.getLogger(__name__)
 
 class ExcelHandler:
-    """Класс для работы с Excel файлом"""
+    """Класс для работы с Excel файлом (асинхронная версия)"""
     
     def __init__(self):
         self.drive_client = GoogleDriveClient()
@@ -16,20 +18,30 @@ class ExcelHandler:
         self.df_nomenclature = None
         self.df_specifications = None
         self.is_loaded = False
+        self.executor = ThreadPoolExecutor(max_workers=2)
     
-    def download_and_load(self):
-        """Скачивает файл и загружает данные в pandas"""
+    async def run_in_executor(self, func, *args):
+        """Запускает блокирующую функцию в отдельном потоке"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, func, *args)
+    
+    async def download_and_load_async(self):
+        """Асинхронно скачивает файл и загружает данные в pandas"""
         success, file_data, message = self.drive_client.download_file(self.file_id)
         if not success:
             return False, message
         
         try:
-            # Читаем Excel
-            excel_file = pd.ExcelFile(file_data)
+            # Читаем Excel (блокирующая операция)
+            excel_file = await self.run_in_executor(pd.ExcelFile, file_data)
             
             # Загружаем листы
-            self.df_nomenclature = pd.read_excel(excel_file, sheet_name='Номенклатура')
-            self.df_specifications = pd.read_excel(excel_file, sheet_name='Спецификации')
+            self.df_nomenclature = await self.run_in_executor(
+                pd.read_excel, excel_file, sheet_name='Номенклатура'
+            )
+            self.df_specifications = await self.run_in_executor(
+                pd.read_excel, excel_file, sheet_name='Спецификации'
+            )
             
             self.is_loaded = True
             logger.info(f"✅ Загружено: номенклатура {len(self.df_nomenclature)} записей")
@@ -39,8 +51,8 @@ class ExcelHandler:
             logger.error(f"❌ Ошибка чтения Excel: {e}")
             return False, f"❌ Ошибка чтения файла: {e}"
     
-    def save_and_upload(self):
-        """Сохраняет DataFrame обратно в Excel и загружает на Диск"""
+    async def save_and_upload_async(self):
+        """Асинхронно сохраняет DataFrame обратно в Excel и загружает на Диск"""
         if not self.is_loaded:
             return False, "❌ Нет загруженных данных"
         
@@ -50,10 +62,10 @@ class ExcelHandler:
             with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
                 temp_path = tmp.name
             
-            # Сохраняем в Excel
-            with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
-                self.df_nomenclature.to_excel(writer, sheet_name='Номенклатура', index=False)
-                self.df_specifications.to_excel(writer, sheet_name='Спецификации', index=False)
+            # Сохраняем в Excel (блокирующая операция)
+            await self.run_in_executor(
+                self._save_to_excel, temp_path
+            )
             
             logger.info(f"✅ Excel сохранён временно: {temp_path}")
             
@@ -69,6 +81,12 @@ class ExcelHandler:
             # Удаляем временный файл
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
+    
+    def _save_to_excel(self, path):
+        """Синхронное сохранение в Excel"""
+        with pd.ExcelWriter(path, engine='openpyxl') as writer:
+            self.df_nomenclature.to_excel(writer, sheet_name='Номенклатура', index=False)
+            self.df_specifications.to_excel(writer, sheet_name='Спецификации', index=False)
     
     def get_unique_categories(self):
         """Возвращает список уникальных категорий"""
@@ -224,3 +242,50 @@ class ExcelHandler:
         self.df_specifications = pd.concat([self.df_specifications, pd.DataFrame([new_row])], ignore_index=True)
         
         return True, f"✅ Материал привязан с количеством {quantity}"
+    
+    def update_product_price(self, code, new_price):
+        """Обновляет цену производства изделия/узла"""
+        if not self.is_loaded:
+            return False, "❌ Данные не загружены"
+        
+        mask = self.df_nomenclature['Код'] == code
+        if len(self.df_nomenclature[mask]) == 0:
+            return False, f"❌ Код {code} не найден"
+        
+        self.df_nomenclature.loc[mask, 'Цена производства'] = new_price
+        return True, f"✅ Цена обновлена на {new_price}"
+    
+    def update_product_multiplicity(self, code, new_multiplicity):
+        """Обновляет кратность изделия/узла"""
+        if not self.is_loaded:
+            return False, "❌ Данные не загружены"
+        
+        mask = self.df_nomenclature['Код'] == code
+        if len(self.df_nomenclature[mask]) == 0:
+            return False, f"❌ Код {code} не найден"
+        
+        self.df_nomenclature.loc[mask, 'Кратность'] = new_multiplicity
+        return True, f"✅ Кратность обновлена на {new_multiplicity}"
+    
+    def get_product_children(self, parent_code):
+        """Возвращает список всех потомков (узлы и материалы) для родителя"""
+        if not self.is_loaded:
+            return []
+        
+        specs = self.df_specifications[self.df_specifications['Родитель'] == parent_code]
+        result = []
+        
+        for _, spec in specs.iterrows():
+            child_code = spec['Потомок']
+            quantity = spec['Количество']
+            
+            child = self.get_product_by_code(child_code)
+            if child:
+                result.append({
+                    'code': child_code,
+                    'name': child['Наименование'],
+                    'type': child['Тип'],
+                    'quantity': quantity
+                })
+        
+        return result
