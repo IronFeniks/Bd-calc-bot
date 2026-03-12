@@ -2,29 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import logging
-import subprocess
 import sys
-
-# Принудительно переустанавливаем правильные версии
-print("🔄 Проверка версий библиотек...")
-
-try:
-    import google.auth
-    import google_auth_oauthlib
-    print(f"✅ google-auth версия: {google.auth.__version__}")
-    print(f"✅ google-auth-oauthlib версия: {google_auth_oauthlib.__version__}")
-    
-    if google.auth.__version__ != '2.23.4':
-        print("⚠️ Неправильная версия, переустанавливаем...")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', 'google-auth==2.23.4'])
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', 'google-auth-oauthlib==1.0.0'])
-        print("✅ Переустановка завершена")
-except Exception as e:
-    print(f"⚠️ Ошибка: {e}")
+import os
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from telegram import __version__ as TG_VER
 
-from config import BOT_TOKEN, ADMIN_ID
+from config import BOT_TOKEN, ADMIN_IDS, DATA_DIR, EXCEL_FILE
 from handlers import (
     start_command, button_handler, handle_message,
     set_excel_handler
@@ -32,36 +14,28 @@ from handlers import (
 from excel_handler import ExcelHandler
 
 # ==================== НАСТРОЙКА ЛОГИРОВАНИЯ ====================
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.INFO)
-
-file_handler = logging.FileHandler('bot_debug.log', mode='a', encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
-
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
-
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)
-root_logger.addHandler(console_handler)
-root_logger.addHandler(file_handler)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('bot.log', mode='a', encoding='utf-8')
+    ]
+)
 
 logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 logger.info("🚀 Запуск бота-администратора...")
-logger.info(f"Python version: {sys.version}")
-logger.info(f"python-telegram-bot version: {TG_VER}")
-logger.info(f"Admin ID: {ADMIN_ID}")
-logger.info(f"Bot Token starts with: {BOT_TOKEN[:5]}..." if BOT_TOKEN else "❌ Токен не найден!")
+logger.info(f"Admin IDs: {ADMIN_IDS}")
+logger.info(f"Excel файл: {EXCEL_FILE}")
 
 # =========================================================================
 
 excel_handler = None
 
 async def post_init(application: Application):
+    """Действия после инициализации бота"""
     global excel_handler
     logger.info("⚙️ Выполняется post_init...")
     
@@ -70,10 +44,11 @@ async def post_init(application: Application):
         set_excel_handler(excel_handler)
         logger.info("✅ Обработчик Excel инициализирован")
         
-        if excel_handler.drive_client.creds:
-            logger.info("✅ Google Drive авторизация есть")
+        # Проверяем наличие файла
+        if os.path.exists(EXCEL_FILE):
+            logger.info(f"✅ Файл {EXCEL_FILE} найден")
         else:
-            logger.info("🔑 Google Drive авторизация требуется при первом запуске")
+            logger.warning(f"⚠️ Файл {EXCEL_FILE} не найден")
         
         await application.bot.set_my_commands([
             ("start", "🏠 Главное меню"),
@@ -106,20 +81,11 @@ def main():
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("cancel", cancel_command))
         application.add_handler(CommandHandler("help", help_command))
-        logger.info("✅ Команды добавлены")
-        
         application.add_handler(CallbackQueryHandler(button_handler))
-        logger.info("✅ Callback обработчик добавлен")
-        
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        logger.info("✅ Message обработчик добавлен")
+        logger.info("✅ Все обработчики добавлены")
         
-        application.add_error_handler(error_handler)
-        logger.info("✅ Error обработчик добавлен")
-        
-        logger.info("🎉 Все обработчики зарегистрированы")
         logger.info("🔄 Запуск polling...")
-        
         application.run_polling(allowed_updates=['message', 'callback_query'])
         
     except Exception as e:
@@ -142,9 +108,6 @@ async def cancel_command(update, context):
     )
 
 async def help_command(update, context):
-    user_id = update.effective_user.id
-    logger.info(f"📖 Команда /help от пользователя {user_id}")
-    
     help_text = """
 📖 ПОМОЩЬ ПО БОТУ-АДМИНИСТРАТОРУ
 
@@ -161,26 +124,13 @@ async def help_command(update, context):
 При работе со списками:
 ◀️ ▶️ - навигация по страницам
 ➕ Добавить - создание нового элемента
-✏️ Редактировать - изменение существующего
 🔗 Привязать - связывание элементов
 
-Важно: 
-- Данные сохраняются в Excel файл на Google Drive
-- Основной бот подхватит изменения через 5 минут
+💾 Все изменения сохраняются в файл:
+data/База для приложения.xlsx
     """
     
     await update.message.reply_text(help_text)
-
-async def error_handler(update, context):
-    logger.error(f"❌ Ошибка: {context.error}", exc_info=True)
-    
-    try:
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "❌ Произошла внутренняя ошибка. Администратор уже уведомлен."
-            )
-    except Exception as e:
-        logger.error(f"❌ Не удалось отправить сообщение об ошибке: {e}")
 
 if __name__ == '__main__':
     main()
