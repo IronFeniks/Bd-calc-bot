@@ -4,6 +4,16 @@
 import logging
 import sys
 import os
+import subprocess
+
+# Проверка openpyxl
+try:
+    import openpyxl
+    print(f"✅ openpyxl версия: {openpyxl.__version__}")
+except ImportError:
+    print("❌ openpyxl не найден. Устанавливаю...")
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'openpyxl==3.1.2'])
+    print("✅ openpyxl установлен")
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config import BOT_TOKEN, ADMIN_IDS, DATA_DIR, EXCEL_FILE
