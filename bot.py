@@ -8,6 +8,23 @@
 
 import logging
 import asyncio
+import subprocess
+import sys
+
+# Принудительно устанавливаем недостающие библиотеки
+required_packages = [
+    'google-auth-oauthlib==1.2.0',
+    'google-auth-httplib2==0.2.0',
+    'google-api-python-client==2.120.0'
+]
+
+for package in required_packages:
+    try:
+        __import__(package.split('==')[0].replace('-', '_'))
+        print(f"✅ {package} уже установлен")
+    except ImportError:
+        print(f"📦 Устанавливаю {package}...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.ext import ConversationHandler
 
