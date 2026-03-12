@@ -8,8 +8,18 @@
 
 import logging
 import asyncio
+# В самом верху bot.py добавьте:
 import subprocess
 import sys
+
+print("🔍 Проверка зависимостей...")
+result = subprocess.run([sys.executable, 'check_libs.py'])
+if result.returncode != 0:
+    print("❌ Ошибка при проверке зависимостей")
+    sys.exit(1)
+
+# Дальше идет остальной код бота
+...
 
 # Принудительно устанавливаем недостающие библиотеки
 required_packages = [
