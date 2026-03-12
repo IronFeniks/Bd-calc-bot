@@ -1,20 +1,12 @@
 import os
 
 # ==================== НАСТРОЙКИ БОТА ====================
-# Эти переменные будут браться из настроек хостинга (Bothost)
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
+BOT_TOKEN = "7876789974:AAEexzpfm6wT9csVfAOormkTHZE9Y5q9q1E"
+ADMIN_IDS = [639212691]  # Список администраторов (можно добавить несколько ID через запятую)
 
-# ==================== НАСТРОЙКИ GOOGLE DRIVE ====================
-FILE_ID = os.environ.get('FILE_ID', '')
-CLIENT_ID = os.environ.get('CLIENT_ID', '')
-CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '')
-
-# Redirect URI для Desktop приложения
-REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
-
-# Путь к файлу с токенами
-TOKEN_FILE = "token.json"
+# ==================== НАСТРОЙКИ ЛОКАЛЬНОГО ФАЙЛА ====================
+DATA_DIR = "data"
+EXCEL_FILE = os.path.join(DATA_DIR, "База для приложения.xlsx")
 
 # ==================== НАСТРОЙКИ ПАГИНАЦИИ ====================
 ITEMS_PER_PAGE = 10
