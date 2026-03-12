@@ -839,3 +839,154 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❓ Я ожидаю команды из меню. Используйте /start",
         reply_markup=main_menu_keyboard(user_id)
     )
+# ==================== ОБРАБОТЧИК КНОПОК ====================
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Основной обработчик нажатий на inline-кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    user_id = query.from_user.id
+    
+    if not data.startswith(f"user_{user_id}_") and data not in ["noop"]:
+        await query.answer("⛔ Эта кнопка не для вас", show_alert=True)
+        return
+    
+    if not await check_admin_callback(query, user_id):
+        return
+    
+    action = data.replace(f"user_{user_id}_", "")
+    
+    # ===== ГЛАВНОЕ МЕНЮ =====
+    if action == "main":
+        await back_to_main(query, context, user_id)
+        return
+    
+    if action == "exit":
+        await query.edit_message_text("👋 До свидания!")
+        return
+    
+    # ===== КАТЕГОРИИ =====
+    if action == "categories":
+        await show_categories(query, context, user_id, 1)
+        return
+    
+    if action.startswith("categories_page_"):
+        page = int(action.replace("categories_page_", ""))
+        await show_categories(query, context, user_id, page)
+        return
+    
+    if action == "add_category":
+        await add_category_start(query, context, user_id)
+        return
+    
+    # ===== ИЗДЕЛИЯ =====
+    if action == "products":
+        await show_products(query, context, user_id, "Все", 1)
+        return
+    
+    if action.startswith("products_page_"):
+        page = int(action.replace("products_page_", ""))
+        user_data = get_user_data(context, user_id)
+        category = user_data.get('current_category', "Все")
+        await show_products(query, context, user_id, category, page)
+        return
+    
+    if action == "add_product":
+        await add_product_start(query, context, user_id)
+        return
+    
+    if action.startswith("product_"):
+        product_code = action.replace("product_", "")
+        await show_product_detail(query, context, user_id, product_code)
+        return
+    
+    if action.startswith("link_node_"):
+        product_code = action.replace("link_node_", "")
+        await link_node_start(query, context, user_id, product_code)
+        return
+    
+    if action.startswith("link_material_"):
+        product_code = action.replace("link_material_", "")
+        await link_material_start(query, context, user_id, product_code, 'product')
+        return
+    
+    # ===== МАТЕРИАЛЫ =====
+    if action == "materials":
+        await show_materials(query, context, user_id, 1)
+        return
+    
+    if action.startswith("materials_page_"):
+        page = int(action.replace("materials_page_", ""))
+        await show_materials(query, context, user_id, page)
+        return
+    
+    if action == "add_material":
+        await add_material_start(query, context, user_id)
+        return
+    
+    if action.startswith("material_"):
+        material_code = action.replace("material_", "")
+        await show_material_detail(query, context, user_id, material_code)
+        return
+    
+    # ===== ВЫБОР КАТЕГОРИИ ПРИ ДОБАВЛЕНИИ =====
+    if action.startswith("select_cat_"):
+        category = action.replace("select_cat_", "")
+        await select_category_callback(query, context, user_id, category)
+        return
+    
+    if action.startswith("select_matcat_"):
+        category = action.replace("select_matcat_", "")
+        await select_material_category_callback(query, context, user_id, category)
+        return
+    
+    # ===== ВЫБОР УЗЛА/МАТЕРИАЛА ПРИ ПРИВЯЗКЕ =====
+    if action.startswith("select_node_"):
+        node_code = action.replace("select_node_", "")
+        await select_node_callback(query, context, user_id, node_code)
+        return
+    
+    if action.startswith("select_material_"):
+        material_code = action.replace("select_material_", "")
+        await select_material_callback(query, context, user_id, material_code)
+        return
+    
+    # ===== НАЗАД =====
+    if action == "back_to_main":
+        await back_to_main(query, context, user_id)
+        return
+    
+    if action == "back_to_categories":
+        await show_categories(query, context, user_id, 1)
+        return
+    
+    if action == "back_to_products":
+        user_data = get_user_data(context, user_id)
+        category = user_data.get('current_category', "Все")
+        await show_products(query, context, user_id, category, 1)
+        return
+    
+    if action == "back_to_materials":
+        await show_materials(query, context, user_id, 1)
+        return
+    
+    if action.startswith("back_to_product_"):
+        product_code = action.replace("back_to_product_", "")
+        await show_product_detail(query, context, user_id, product_code)
+        return
+    
+    # ===== ОТМЕНА =====
+    if action == "cancel":
+        clear_user_data(context, user_id)
+        set_user_state(context, user_id, AdminStates.MAIN_MENU)
+        await query.edit_message_text("❌ Действие отменено")
+        return
+    
+    # ===== ПУСТЫЕ ДЕЙСТВИЯ =====
+    if action == "noop":
+        return
+    
+    logger.warning(f"Неизвестное действие: {action}")
+    await query.edit_message_text("❌ Неизвестная команда")
