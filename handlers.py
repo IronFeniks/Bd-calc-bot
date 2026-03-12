@@ -136,7 +136,6 @@ async def back_to_main(query, context, user_id):
         reply_markup=main_menu_keyboard(user_id),
         parse_mode=ParseMode.MARKDOWN
     )
-
 # ==================== КАТЕГОРИИ ====================
 
 async def show_categories(query, context, user_id, page=1):
@@ -186,10 +185,6 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         )
         return
     
-    # Категории хранятся в столбце 'Категории' в номенклатуре
-    # Для добавления категории мы просто будем использовать её при создании элементов
-    # Сама категория как отдельная сущность не хранится
-    
     await update.message.reply_text(
         f"✅ Категория '{text}' будет доступна при создании элементов",
         reply_markup=back_button(user_id, "categories")
@@ -207,7 +202,6 @@ async def show_products(query, context, user_id, category=None, page=1):
         return
     
     if category == "Все" or not category:
-        # Показываем все изделия и узлы
         mask = excel_handler.df_nomenclature['Тип'].str.lower().isin(['изделие', 'узел'])
         filtered = excel_handler.df_nomenclature[mask]
         total_items = len(filtered)
@@ -226,7 +220,6 @@ async def show_products(query, context, user_id, category=None, page=1):
     
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     
-    # Сохраняем текущую категорию в данных пользователя
     user_data = get_user_data(context, user_id)
     user_data['current_category'] = category
     
@@ -252,15 +245,12 @@ async def show_product_detail(query, context, user_id, product_code):
         await query.edit_message_text("❌ Изделие не найдено")
         return
     
-    # Сохраняем текущий продукт в данных пользователя
     user_data = get_user_data(context, user_id)
     user_data['current_product'] = product_code
     
-    # Получаем связанные узлы и материалы
     nodes = []
     materials = []
     
-    # Ищем в спецификациях
     specs = excel_handler.df_specifications[
         excel_handler.df_specifications['Родитель'] == product_code
     ]
@@ -269,7 +259,6 @@ async def show_product_detail(query, context, user_id, product_code):
         child_code = spec['Потомок']
         quantity = spec['Количество']
         
-        # Ищем в номенклатуре тип элемента
         child_row = excel_handler.df_nomenclature[
             excel_handler.df_nomenclature['Код'] == child_code
         ]
@@ -331,7 +320,6 @@ async def add_product_code(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         )
         return
     
-    # Проверяем уникальность кода
     if text in excel_handler.df_nomenclature['Код'].values:
         await update.message.reply_text(
             f"❌ Код '{text}' уже существует. Введите другой код:",
@@ -361,11 +349,9 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     
     user_data['new_product']['name'] = text
     
-    # Показываем список категорий для выбора
     categories = excel_handler.get_unique_categories()
     
     if not categories:
-        # Если нет категорий, пропускаем этот шаг
         user_data['new_product']['category'] = ''
         set_user_state(context, user_id, AdminStates.PRODUCT_ADD_PRICE)
         await update.message.reply_text(
@@ -374,7 +360,6 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         )
         return
     
-    # Создаём клавиатуру с категориями
     keyboard = []
     for cat in categories:
         keyboard.append([InlineKeyboardButton(cat, callback_data=f"user_{user_id}_select_cat_{cat}")])
@@ -385,8 +370,7 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         "Шаг 3 из 5: Выберите категорию",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
-async def select_category_callback(query, context, user_id, category):
+    async def select_category_callback(query, context, user_id, category):
     """Обрабатывает выбор категории"""
     user_data = get_user_data(context, user_id)
     
@@ -442,8 +426,7 @@ async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT
     )
     
     if success:
-        # Сохраняем изменения в файл
-        save_success, save_message = excel_handler.save_and_upload()
+        save_success, save_message = await excel_handler.save_and_upload_async()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -495,10 +478,9 @@ async def show_material_detail(query, context, user_id, material_code):
     
     material = excel_handler.get_product_by_code(material_code)
     if not material:
-        await query.edit_message_text("❌ Материал не найден")
+        await query.edit_message_text("❌ Материал не найдено")
         return
     
-    # Находим, где используется материал
     used_in = excel_handler.df_specifications[
         excel_handler.df_specifications['Потомок'] == material_code
     ]
@@ -580,15 +562,12 @@ async def add_material_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     user_data['new_material']['name'] = text
     
-    # Показываем список категорий для выбора
     categories = excel_handler.get_unique_categories()
     
     if not categories:
-        # Если нет категорий, пропускаем этот шаг
         await save_material(update, context, user_id, '')
         return
     
-    # Создаём клавиатуру с категориями
     keyboard = []
     for cat in categories:
         keyboard.append([InlineKeyboardButton(cat, callback_data=f"user_{user_id}_select_matcat_{cat}")])
@@ -618,7 +597,7 @@ async def save_material(update_or_query, context, user_id, category):
     )
     
     if success:
-        save_success, save_message = excel_handler.save_and_upload()
+        save_success, save_message = await excel_handler.save_and_upload_async()
         if save_success:
             await update_or_query.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -636,7 +615,6 @@ async def save_material(update_or_query, context, user_id, category):
         )
     
     clear_user_data(context, user_id)
-
 # ==================== ПРИВЯЗКА УЗЛОВ ====================
 
 async def link_node_start(query, context, user_id, product_code):
@@ -645,7 +623,6 @@ async def link_node_start(query, context, user_id, product_code):
     user_data['link_product'] = product_code
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_SELECT)
     
-    # Показываем список узлов
     mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'узел'
     nodes_df = excel_handler.df_nomenclature[mask]
     
@@ -696,7 +673,7 @@ async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE,
     success, message = excel_handler.link_node_to_product(product_code, node_code, quantity)
     
     if success:
-        save_success, save_message = excel_handler.save_and_upload()
+        save_success, save_message = await excel_handler.save_and_upload_async()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -724,7 +701,6 @@ async def link_material_start(query, context, user_id, parent_code, parent_type=
     user_data['link_parent_type'] = parent_type
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_SELECT)
     
-    # Показываем список материалов
     mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'материал'
     materials_df = excel_handler.df_nomenclature[mask]
     
@@ -775,7 +751,7 @@ async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_T
     success, message = excel_handler.link_material_to_product(parent_code, material_code, quantity)
     
     if success:
-        save_success, save_message = excel_handler.save_and_upload()
+        save_success, save_message = await excel_handler.save_and_upload_async()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -794,150 +770,69 @@ async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_T
     
     clear_user_data(context, user_id)
 
-# ==================== ОБРАБОТЧИК КНОПОК ====================
+# ==================== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ====================
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Основной обработчик нажатий на inline-кнопки"""
-    query = update.callback_query
-    await query.answer()
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает текстовые сообщения"""
+    user_id = update.effective_user.id
+    logger.info(f"📨 Сообщение от {user_id}: {update.message.text[:50]}...")
     
-    data = query.data
-    user_id = query.from_user.id
+    user_data = get_user_data(context, user_id)
+    state = get_user_state(context, user_id)
+    text = update.message.text.strip()
     
-    if not data.startswith(f"user_{user_id}_"):
-        await query.answer("⛔ Эта кнопка не для вас", show_alert=True)
+    # Обработка кода авторизации
+    if state == AdminStates.WAITING_FOR_AUTH_CODE:
+        flow = user_data.get('auth_flow')
+        if not flow:
+            await update.message.reply_text("❌ Ошибка: сессия авторизации устарела. Начните заново с /start")
+            return
+        
+        success, message = excel_handler.drive_client.exchange_code(text, flow)
+        if success:
+            await update.message.reply_text(message)
+            await start_command(update, context)
+        else:
+            await update.message.reply_text(message)
         return
     
-    if not await check_admin_callback(query, user_id):
+    # Обработка добавления категории
+    if state == AdminStates.CATEGORY_ADD_NAME:
+        await add_category_name(update, context, text)
         return
     
-    action = data.replace(f"user_{user_id}_", "")
-    
-    # ===== ГЛАВНОЕ МЕНЮ =====
-    if action == "main":
-        await back_to_main(query, context, user_id)
+    # Обработка добавления изделия
+    if state == AdminStates.PRODUCT_ADD_CODE:
+        await add_product_code(update, context, text)
+        return
+    if state == AdminStates.PRODUCT_ADD_NAME:
+        await add_product_name(update, context, text)
+        return
+    if state == AdminStates.PRODUCT_ADD_PRICE:
+        await add_product_price(update, context, text)
+        return
+    if state == AdminStates.PRODUCT_ADD_MULTIPLICITY:
+        await add_product_multiplicity(update, context, text)
         return
     
-    if action == "exit":
-        await query.edit_message_text("👋 До свидания!")
+    # Обработка добавления материала
+    if state == AdminStates.MATERIAL_ADD_CODE:
+        await add_material_code(update, context, text)
+        return
+    if state == AdminStates.MATERIAL_ADD_NAME:
+        await add_material_name(update, context, text)
         return
     
-    # ===== КАТЕГОРИИ =====
-    if action == "categories":
-        await show_categories(query, context, user_id, 1)
+    # Обработка привязок
+    if state == AdminStates.PRODUCT_LINK_NODE_QUANTITY:
+        await link_node_quantity(update, context, text)
         return
     
-    if action.startswith("categories_page_"):
-        page = int(action.replace("categories_page_", ""))
-        await show_categories(query, context, user_id, page)
+    if state in [AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY, AdminStates.NODE_LINK_MATERIAL_QUANTITY]:
+        await link_material_quantity(update, context, text)
         return
     
-    if action == "add_category":
-        await add_category_start(query, context, user_id)
-        return
-    
-    # ===== ИЗДЕЛИЯ =====
-    if action == "products":
-        await show_products(query, context, user_id, "Все", 1)
-        return
-    
-    if action.startswith("products_page_"):
-        page = int(action.replace("products_page_", ""))
-        user_data = get_user_data(context, user_id)
-        category = user_data.get('current_category', "Все")
-        await show_products(query, context, user_id, category, page)
-        return
-    
-    if action == "add_product":
-        await add_product_start(query, context, user_id)
-        return
-    
-    if action.startswith("product_"):
-        product_code = action.replace("product_", "")
-        await show_product_detail(query, context, user_id, product_code)
-        return
-    
-    if action.startswith("link_node_"):
-        product_code = action.replace("link_node_", "")
-        await link_node_start(query, context, user_id, product_code)
-        return
-    
-    if action.startswith("link_material_"):
-        product_code = action.replace("link_material_", "")
-        await link_material_start(query, context, user_id, product_code, 'product')
-        return
-    
-    # ===== МАТЕРИАЛЫ =====
-    if action == "materials":
-        await show_materials(query, context, user_id, 1)
-        return
-    
-    if action.startswith("materials_page_"):
-        page = int(action.replace("materials_page_", ""))
-        await show_materials(query, context, user_id, page)
-        return
-    
-    if action == "add_material":
-        await add_material_start(query, context, user_id)
-        return
-    
-    if action.startswith("material_"):
-        material_code = action.replace("material_", "")
-        await show_material_detail(query, context, user_id, material_code)
-        return
-    
-    # ===== ВЫБОР КАТЕГОРИИ ПРИ ДОБАВЛЕНИИ =====
-    if action.startswith("select_cat_"):
-        category = action.replace("select_cat_", "")
-        await select_category_callback(query, context, user_id, category)
-        return
-    
-    if action.startswith("select_matcat_"):
-        category = action.replace("select_matcat_", "")
-        await select_material_category_callback(query, context, user_id, category)
-        return
-    
-    # ===== ВЫБОР УЗЛА/МАТЕРИАЛА ПРИ ПРИВЯЗКЕ =====
-    if action.startswith("select_node_"):
-        node_code = action.replace("select_node_", "")
-        await select_node_callback(query, context, user_id, node_code)
-        return
-    
-    if action.startswith("select_material_"):
-        material_code = action.replace("select_material_", "")
-        await select_material_callback(query, context, user_id, material_code)
-        return
-    
-    # ===== НАЗАД =====
-    if action == "back_to_main":
-        await back_to_main(query, context, user_id)
-        return
-    
-    if action == "back_to_categories":
-        await show_categories(query, context, user_id, 1)
-        return
-    
-    if action == "back_to_products":
-        user_data = get_user_data(context, user_id)
-        category = user_data.get('current_category', "Все")
-        await show_products(query, context, user_id, category, 1)
-        return
-    
-    if action == "back_to_materials":
-        await show_materials(query, context, user_id, 1)
-        return
-    
-    if action.startswith("back_to_product_"):
-        product_code = action.replace("back_to_product_", "")
-        await show_product_detail(query, context, user_id, product_code)
-        return
-    
-    # ===== ОТМЕНА =====
-    if action == "cancel":
-        clear_user_data(context, user_id)
-        set_user_state(context, user_id, AdminStates.MAIN_MENU)
-        await query.edit_message_text("❌ Действие отменено")
-        return
-    
-    logger.warning(f"Неизвестное действие: {action}")
-    await query.edit_message_text("❌ Неизвестная команда")
+    await update.message.reply_text(
+        "❓ Я ожидаю команды из меню. Используйте /start",
+        reply_markup=main_menu_keyboard(user_id)
+    )
