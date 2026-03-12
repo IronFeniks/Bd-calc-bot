@@ -136,6 +136,7 @@ async def back_to_main(query, context, user_id):
         reply_markup=main_menu_keyboard(user_id),
         parse_mode=ParseMode.MARKDOWN
     )
+
 # ==================== КАТЕГОРИИ ====================
 
 async def show_categories(query, context, user_id, page=1):
@@ -370,22 +371,10 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         "Шаг 3 из 5: Выберите категорию",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    async def select_category_callback(query, context, user_id, category):
+
+async def select_category_callback(query, context, user_id, category):
     """Обрабатывает выбор категории"""
     user_data = get_user_data(context, user_id)
-    
-    if category == "skip":
-        user_data['new_product']['category'] = ''
-    else:
-        user_data['new_product']['category'] = category
-    
-    set_user_state(context, user_id, AdminStates.PRODUCT_ADD_PRICE)
-    
-    await query.edit_message_text(
-        "Шаг 4 из 5: Введите цену производства\n"
-        "(например: `5400000000 ISK`)",
-        reply_markup=cancel_button(user_id)
-    )
     
     if category == "skip":
         user_data['new_product']['category'] = ''
@@ -491,7 +480,7 @@ async def show_material_detail(query, context, user_id, material_code):
     
     material = excel_handler.get_product_by_code(material_code)
     if not material:
-        await query.edit_message_text("❌ Материал не найдено")
+        await query.edit_message_text("❌ Материал не найден")
         return
     
     used_in = excel_handler.df_specifications[
@@ -628,6 +617,7 @@ async def save_material(update_or_query, context, user_id, category):
         )
     
     clear_user_data(context, user_id)
+
 # ==================== ПРИВЯЗКА УЗЛОВ ====================
 
 async def link_node_start(query, context, user_id, product_code):
