@@ -1,10 +1,10 @@
 python-telegram-bot==20.7
 pandas==2.2.0
 openpyxl==3.1.2
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
-google-api-python-client==2.120.0
+google-auth==2.23.4
+google-auth-oauthlib==1.0.0
+google-auth-httplib2==0.1.1
+google-api-python-client==2.108.0
 requests==2.31.0
 urllib3==1.26.18
 certifi==2024.2.2
