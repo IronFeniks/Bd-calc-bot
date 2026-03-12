@@ -2,7 +2,35 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import subprocess
 import sys
+
+# Принудительная установка недостающих библиотек
+required_packages = [
+    'google-auth==2.29.0',
+    'google-auth-oauthlib==1.2.0',
+    'google-auth-httplib2==0.2.0',
+    'google-api-python-client==2.120.0',
+    'requests==2.31.0'
+]
+
+for package in required_packages:
+    try:
+        package_name = package.split('==')[0]
+        if package_name == 'google-auth':
+            __import__('google.auth')
+        elif package_name == 'google-auth-oauthlib':
+            __import__('google_auth_oauthlib')
+        elif package_name == 'google-auth-httplib2':
+            __import__('google_auth_httplib2')
+        elif package_name == 'google-api-python-client':
+            __import__('googleapiclient')
+        else:
+            __import__(package_name)
+        print(f"✅ {package} уже установлен")
+    except ImportError:
+        print(f"📦 Устанавливаю {package}...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram import __version__ as TG_VER
 
