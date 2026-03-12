@@ -32,10 +32,8 @@ class ExcelHandler:
             return False, message
         
         try:
-            # Читаем Excel (блокирующая операция)
             excel_file = await self.run_in_executor(pd.ExcelFile, file_data)
             
-            # Загружаем листы
             self.df_nomenclature = await self.run_in_executor(
                 pd.read_excel, excel_file, sheet_name='Номенклатура'
             )
@@ -58,18 +56,15 @@ class ExcelHandler:
         
         temp_path = None
         try:
-            # Создаём временный файл
             with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
                 temp_path = tmp.name
             
-            # Сохраняем в Excel (блокирующая операция)
             await self.run_in_executor(
                 self._save_to_excel, temp_path
             )
             
             logger.info(f"✅ Excel сохранён временно: {temp_path}")
             
-            # Загружаем на Диск
             success, message = self.drive_client.upload_file(self.file_id, temp_path)
             
             return success, message
@@ -78,7 +73,6 @@ class ExcelHandler:
             logger.error(f"❌ Ошибка сохранения Excel: {e}")
             return False, f"❌ Ошибка сохранения: {e}"
         finally:
-            # Удаляем временный файл
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
     
@@ -159,11 +153,9 @@ class ExcelHandler:
         if not self.is_loaded:
             return False, "❌ Данные не загружены"
         
-        # Проверяем уникальность кода
         if code in self.df_nomenclature['Код'].values:
             return False, f"❌ Код {code} уже существует"
         
-        # Создаём новую строку
         new_row = {
             'Код': code,
             'Наименование': name,
@@ -173,7 +165,6 @@ class ExcelHandler:
             'Кратность': multiplicity
         }
         
-        # Добавляем строку
         self.df_nomenclature = pd.concat([self.df_nomenclature, pd.DataFrame([new_row])], ignore_index=True)
         
         return True, f"✅ {type_name} '{name}' успешно добавлен"
@@ -204,14 +195,12 @@ class ExcelHandler:
         if not self.is_loaded:
             return False, "❌ Данные не загружены"
         
-        # Проверяем, существует ли уже такая связь
         mask = (self.df_specifications['Родитель'] == product_code) & \
                (self.df_specifications['Потомок'] == node_code)
         
         if len(self.df_specifications[mask]) > 0:
             return False, "❌ Такая связь уже существует"
         
-        # Добавляем новую связь
         new_row = {
             'Родитель': product_code,
             'Потомок': node_code,
@@ -242,30 +231,6 @@ class ExcelHandler:
         self.df_specifications = pd.concat([self.df_specifications, pd.DataFrame([new_row])], ignore_index=True)
         
         return True, f"✅ Материал привязан с количеством {quantity}"
-    
-    def update_product_price(self, code, new_price):
-        """Обновляет цену производства изделия/узла"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        mask = self.df_nomenclature['Код'] == code
-        if len(self.df_nomenclature[mask]) == 0:
-            return False, f"❌ Код {code} не найден"
-        
-        self.df_nomenclature.loc[mask, 'Цена производства'] = new_price
-        return True, f"✅ Цена обновлена на {new_price}"
-    
-    def update_product_multiplicity(self, code, new_multiplicity):
-        """Обновляет кратность изделия/узла"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        mask = self.df_nomenclature['Код'] == code
-        if len(self.df_nomenclature[mask]) == 0:
-            return False, f"❌ Код {code} не найден"
-        
-        self.df_nomenclature.loc[mask, 'Кратность'] = new_multiplicity
-        return True, f"✅ Кратность обновлена на {new_multiplicity}"
     
     def get_product_children(self, parent_code):
         """Возвращает список всех потомков (узлы и материалы) для родителя"""
