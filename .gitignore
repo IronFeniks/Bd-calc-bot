@@ -1,11 +1,3 @@
-# Secrets
-.env
-*.json
-!client_secrets.json.example
-credentials.json
-token.json
-token.pickle
-
 # Python
 __pycache__/
 *.pyc
@@ -14,32 +6,29 @@ __pycache__/
 .Python
 venv/
 env/
+.env
 .env.local
 .venv
-pip-log.txt
-pip-delete-this-directory.txt
-.pytest_cache/
-.coverage
-htmlcov/
+
+# Data files
+data/
+*.xlsx
+*.xls
+*.db
+*.sqlite
+
+# Logs
+logs/
+*.log
+bot_debug.log
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# Logs
-logs/
-*.log
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
