@@ -2,15 +2,14 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import ADMIN_ID, ITEMS_PER_PAGE
+from config import ADMIN_IDS, ITEMS_PER_PAGE
 from keyboards import (
     main_menu_keyboard, categories_keyboard, products_keyboard,
     materials_keyboard, product_detail_keyboard, material_detail_keyboard,
-    cancel_button, back_button, noop_keyboard
+    cancel_button, back_button
 )
 from excel_handler import ExcelHandler
 from states import AdminStates, get_user_data, set_user_state, get_user_state, clear_user_data
-from drive_client import GoogleDriveClient
 
 logger = logging.getLogger(__name__)
 
@@ -21,70 +20,34 @@ def set_excel_handler(handler: ExcelHandler):
     global excel_handler
     excel_handler = handler
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+# ==================== ПРОВЕРКА ДОСТУПА ====================
 
 async def check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+    if user_id not in ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
         return False
     return True
 
 async def check_admin_callback(query, user_id) -> bool:
-    if user_id != ADMIN_ID:
+    if user_id not in ADMIN_IDS:
         await query.answer("⛔ У вас нет доступа к этому боту", show_alert=True)
         return False
     return True
 
-async def check_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    global excel_handler
-    if not excel_handler.drive_client.creds:
-        await start_auth(update, context)
-        return False
-    return True
-
-async def check_auth_callback(query, context, user_id) -> bool:
-    global excel_handler
-    if not excel_handler.drive_client.creds:
-        await query.edit_message_text("🔑 Требуется авторизация. Используйте /start")
-        return False
-    return True
-
 async def load_data(update, context, user_id) -> bool:
-    success, message = await excel_handler.download_and_load_async()
+    success, message = excel_handler.load_data()
     if not success:
         await update.message.reply_text(message)
         return False
     return True
 
 async def load_data_callback(query, context, user_id) -> bool:
-    success, message = await excel_handler.download_and_load_async()
+    success, message = excel_handler.load_data()
     if not success:
         await query.edit_message_text(message)
         return False
     return True
-
-# ==================== АВТОРИЗАЦИЯ ====================
-
-async def start_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    drive_client = GoogleDriveClient()
-    auth_url, flow = drive_client.get_auth_url()
-    
-    user_data = get_user_data(context, update.effective_user.id)
-    user_data['auth_flow'] = flow
-    set_user_state(context, update.effective_user.id, AdminStates.WAITING_FOR_AUTH_CODE)
-    
-    text = (
-        "🔑 Требуется авторизация в Google Drive\n\n"
-        "1. Перейдите по ссылке:\n"
-        f"{auth_url}\n\n"
-        "2. Войдите в свой Google аккаунт\n"
-        "3. Нажмите 'Разрешить'\n"
-        "4. Скопируйте полученный код\n\n"
-        "5. Введите код в ответном сообщении:"
-    )
-    
-    await update.message.reply_text(text)
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
@@ -96,8 +59,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_user_data(context, user_id)
     set_user_state(context, user_id, AdminStates.MAIN_MENU)
     
-    if not excel_handler.drive_client.creds:
-        await start_auth(update, context)
+    # Проверяем наличие файла
+    success, message = excel_handler.load_data()
+    if not success:
+        await update.message.reply_text(message)
         return
     
     text = (
@@ -127,9 +92,6 @@ async def back_to_main(query, context, user_id):
 # ==================== КАТЕГОРИИ ====================
 
 async def show_categories(query, context, user_id, page=1):
-    if not await check_auth_callback(query, context, user_id):
-        return
-    
     success = await load_data_callback(query, context, user_id)
     if not success:
         return
@@ -172,12 +134,10 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         f"✅ Категория '{text}' будет доступна при создании элементов",
         reply_markup=back_button(user_id, "categories")
     )
+
 # ==================== ИЗДЕЛИЯ ====================
 
 async def show_products(query, context, user_id, category=None, page=1):
-    if not await check_auth_callback(query, context, user_id):
-        return
-    
     success = await load_data_callback(query, context, user_id)
     if not success:
         return
@@ -212,9 +172,6 @@ async def show_products(query, context, user_id, category=None, page=1):
     )
 
 async def show_product_detail(query, context, user_id, product_code):
-    if not await check_auth_callback(query, context, user_id):
-        return
-    
     success = await load_data_callback(query, context, user_id)
     if not success:
         return
@@ -238,18 +195,12 @@ async def show_product_detail(query, context, user_id, product_code):
         child_code = spec['Потомок']
         quantity = spec['Количество']
         
-        child_row = excel_handler.df_nomenclature[
-            excel_handler.df_nomenclature['Код'] == child_code
-        ]
-        
-        if len(child_row) > 0:
-            child_type = child_row.iloc[0]['Тип'].lower()
-            child_name = child_row.iloc[0]['Наименование']
-            
-            if 'узел' in child_type:
-                nodes.append(f"• {child_name} ({quantity} шт)")
-            elif 'материал' in child_type:
-                materials.append(f"• {child_name} ({quantity} шт)")
+        child = excel_handler.get_product_by_code(child_code)
+        if child:
+            if child['Тип'].lower() == 'узел':
+                nodes.append(f"• {child['Наименование']} ({quantity} шт)")
+            elif child['Тип'].lower() == 'материал':
+                materials.append(f"• {child['Наименование']} ({quantity} шт)")
     
     text = f"🏗️ Изделие: {product['Наименование']}\n\n"
     text += f"Код: {product['Код']}\n"
@@ -287,6 +238,10 @@ async def add_product_start(query, context, user_id):
 async def add_product_code(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
+    
+    success = await load_data(update, context, user_id)
+    if not success:
+        return
     
     if not text or len(text) < 3:
         await update.message.reply_text(
@@ -398,7 +353,7 @@ async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT
     )
     
     if success:
-        save_success, save_message = await excel_handler.save_and_upload_async()
+        save_success, save_message = excel_handler.save_data()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -419,9 +374,6 @@ async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT
 # ==================== МАТЕРИАЛЫ ====================
 
 async def show_materials(query, context, user_id, page=1):
-    if not await check_auth_callback(query, context, user_id):
-        return
-    
     success = await load_data_callback(query, context, user_id)
     if not success:
         return
@@ -437,9 +389,6 @@ async def show_materials(query, context, user_id, page=1):
     )
 
 async def show_material_detail(query, context, user_id, material_code):
-    if not await check_auth_callback(query, context, user_id):
-        return
-    
     success = await load_data_callback(query, context, user_id)
     if not success:
         return
@@ -489,6 +438,10 @@ async def add_material_start(query, context, user_id):
 async def add_material_code(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
+    
+    success = await load_data(update, context, user_id)
+    if not success:
+        return
     
     if not text or len(text) < 3:
         await update.message.reply_text(
@@ -558,7 +511,7 @@ async def save_material(update_or_query, context, user_id, category):
     )
     
     if success:
-        save_success, save_message = await excel_handler.save_and_upload_async()
+        save_success, save_message = excel_handler.save_data()
         if save_success:
             await update_or_query.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -576,13 +529,16 @@ async def save_material(update_or_query, context, user_id, category):
         )
     
     clear_user_data(context, user_id)
-
 # ==================== ПРИВЯЗКА УЗЛОВ ====================
 
 async def link_node_start(query, context, user_id, product_code):
     user_data = get_user_data(context, user_id)
     user_data['link_product'] = product_code
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_SELECT)
+    
+    success = await load_data_callback(query, context, user_id)
+    if not success:
+        return
     
     mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'узел'
     nodes_df = excel_handler.df_nomenclature[mask]
@@ -631,7 +587,7 @@ async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE,
     success, message = excel_handler.link_node_to_product(product_code, node_code, quantity)
     
     if success:
-        save_success, save_message = await excel_handler.save_and_upload_async()
+        save_success, save_message = excel_handler.save_data()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -652,11 +608,14 @@ async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 # ==================== ПРИВЯЗКА МАТЕРИАЛОВ ====================
 
-async def link_material_start(query, context, user_id, parent_code, parent_type='product'):
+async def link_material_start(query, context, user_id, parent_code):
     user_data = get_user_data(context, user_id)
     user_data['link_parent'] = parent_code
-    user_data['link_parent_type'] = parent_type
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_SELECT)
+    
+    success = await load_data_callback(query, context, user_id)
+    if not success:
+        return
     
     mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'материал'
     materials_df = excel_handler.df_nomenclature[mask]
@@ -705,7 +664,7 @@ async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_T
     success, message = excel_handler.link_material_to_product(parent_code, material_code, quantity)
     
     if success:
-        save_success, save_message = await excel_handler.save_and_upload_async()
+        save_success, save_message = excel_handler.save_data()
         if save_success:
             await update.message.reply_text(
                 f"{message}\n\n✅ Изменения сохранены в файл",
@@ -723,30 +682,19 @@ async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_T
         )
     
     clear_user_data(context, user_id)
-
 # ==================== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ====================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"📨 Сообщение от {user_id}: {update.message.text[:50]}...")
     
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
+        return
+    
     user_data = get_user_data(context, user_id)
     state = get_user_state(context, user_id)
     text = update.message.text.strip()
-    
-    if state == AdminStates.WAITING_FOR_AUTH_CODE:
-        flow = user_data.get('auth_flow')
-        if not flow:
-            await update.message.reply_text("❌ Ошибка: сессия авторизации устарела. Начните заново с /start")
-            return
-        
-        success, message = excel_handler.drive_client.exchange_code(text, flow)
-        if success:
-            await update.message.reply_text(message)
-            await start_command(update, context)
-        else:
-            await update.message.reply_text(message)
-        return
     
     if state == AdminStates.CATEGORY_ADD_NAME:
         await add_category_name(update, context, text)
@@ -776,7 +724,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await link_node_quantity(update, context, text)
         return
     
-    if state in [AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY, AdminStates.NODE_LINK_MATERIAL_QUANTITY]:
+    if state == AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY:
         await link_material_quantity(update, context, text)
         return
     
@@ -798,7 +746,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Эта кнопка не для вас", show_alert=True)
         return
     
-    if not await check_admin_callback(query, user_id):
+    if user_id not in ADMIN_IDS:
+        await query.answer("⛔ У вас нет доступа", show_alert=True)
         return
     
     action = data.replace(f"user_{user_id}_", "")
@@ -851,7 +800,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if action.startswith("link_material_"):
         product_code = action.replace("link_material_", "")
-        await link_material_start(query, context, user_id, product_code, 'product')
+        await link_material_start(query, context, user_id, product_code)
         return
     
     if action == "materials":
