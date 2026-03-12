@@ -29,11 +29,9 @@ def categories_keyboard(categories, user_id, page=1, total_pages=1):
     """Клавиатура со списком категорий"""
     keyboard = []
     
-    # Кнопки категорий (по 1 в ряду для читаемости)
     for cat in categories:
         keyboard.append([InlineKeyboardButton(cat, callback_data=f"user_{user_id}_cat_{cat}")])
     
-    # Навигация
     nav_row = []
     if page > 1:
         nav_row.append(InlineKeyboardButton("◀️", callback_data=f"user_{user_id}_categories_page_{page-1}"))
@@ -46,7 +44,6 @@ def categories_keyboard(categories, user_id, page=1, total_pages=1):
     if nav_row:
         keyboard.append(nav_row)
     
-    # Кнопка добавления и назад
     keyboard.append([InlineKeyboardButton("➕ Добавить категорию", callback_data=f"user_{user_id}_add_category")])
     keyboard.append([InlineKeyboardButton("🔙 В главное меню", callback_data=f"user_{user_id}_back_to_main")])
     
@@ -60,7 +57,6 @@ def products_keyboard(products, user_id, page=1, total_pages=1, category=None):
         text = f"{p['code']} - {p['name']}"
         keyboard.append([InlineKeyboardButton(text, callback_data=f"user_{user_id}_product_{p['code']}")])
     
-    # Навигация
     nav_row = []
     if page > 1:
         nav_row.append(InlineKeyboardButton("◀️", callback_data=f"user_{user_id}_products_page_{page-1}"))
@@ -73,7 +69,6 @@ def products_keyboard(products, user_id, page=1, total_pages=1, category=None):
     if nav_row:
         keyboard.append(nav_row)
     
-    # Кнопки действий
     keyboard.append([InlineKeyboardButton("➕ Добавить изделие", callback_data=f"user_{user_id}_add_product")])
     
     if category:
@@ -123,16 +118,6 @@ def material_detail_keyboard(user_id, material_code):
     keyboard = [
         [InlineKeyboardButton("✏️ Редактировать", callback_data=f"user_{user_id}_edit_material_{material_code}")],
         [InlineKeyboardButton("🔙 К списку", callback_data=f"user_{user_id}_back_to_materials")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def confirm_keyboard(user_id, action):
-    """Клавиатура подтверждения"""
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да", callback_data=f"user_{user_id}_confirm_{action}"),
-            InlineKeyboardButton("❌ Нет", callback_data=f"user_{user_id}_cancel")
-        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
