@@ -7,3 +7,14 @@ google-auth-httplib2==0.2.0
 google-api-python-client==2.120.0
 python-dotenv==1.0.0
 requests==2.31.0
+urllib3==1.26.18
+certifi==2024.2.2
+charset-normalizer==3.3.2
+idna==3.6
+oauthlib==3.2.2
+requests-oauthlib==1.3.1
+rsa==4.9
+pyasn1==0.5.1
+pyasn1-modules==0.3.0
+cachetools==5.3.2
+httplib2==0.22.0
