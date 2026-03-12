@@ -1,13 +1,12 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.constants import ParseMode
 
 from config import ADMIN_ID, ITEMS_PER_PAGE
 from keyboards import (
     main_menu_keyboard, categories_keyboard, products_keyboard,
     materials_keyboard, product_detail_keyboard, material_detail_keyboard,
-    cancel_button, back_button, confirm_keyboard, noop_keyboard
+    cancel_button, back_button, noop_keyboard
 )
 from excel_handler import ExcelHandler
 from states import AdminStates, get_user_data, set_user_state, get_user_state, clear_user_data
@@ -15,18 +14,16 @@ from drive_client import GoogleDriveClient
 
 logger = logging.getLogger(__name__)
 
-# Глобальный обработчик Excel (будет инициализирован в bot.py)
+# Глобальный обработчик Excel
 excel_handler = None
 
 def set_excel_handler(handler: ExcelHandler):
-    """Устанавливает глобальный обработчик Excel"""
     global excel_handler
     excel_handler = handler
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 async def check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Проверяет, является ли пользователь администратором"""
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         await update.message.reply_text("⛔ У вас нет доступа к этому боту.")
@@ -34,14 +31,12 @@ async def check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
     return True
 
 async def check_admin_callback(query, user_id) -> bool:
-    """Проверяет, является ли пользователь администратором (для callback)"""
     if user_id != ADMIN_ID:
         await query.answer("⛔ У вас нет доступа к этому боту", show_alert=True)
         return False
     return True
 
 async def check_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Проверяет, авторизован ли бот в Google Drive"""
     global excel_handler
     if not excel_handler.drive_client.creds:
         await start_auth(update, context)
@@ -49,7 +44,6 @@ async def check_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     return True
 
 async def check_auth_callback(query, context, user_id) -> bool:
-    """Проверяет авторизацию для callback"""
     global excel_handler
     if not excel_handler.drive_client.creds:
         await query.edit_message_text("🔑 Требуется авторизация. Используйте /start")
@@ -57,7 +51,6 @@ async def check_auth_callback(query, context, user_id) -> bool:
     return True
 
 async def load_data(update, context, user_id) -> bool:
-    """Загружает данные из Excel"""
     success, message = await excel_handler.download_and_load_async()
     if not success:
         await update.message.reply_text(message)
@@ -65,7 +58,6 @@ async def load_data(update, context, user_id) -> bool:
     return True
 
 async def load_data_callback(query, context, user_id) -> bool:
-    """Загружает данные из Excel для callback"""
     success, message = await excel_handler.download_and_load_async()
     if not success:
         await query.edit_message_text(message)
@@ -75,7 +67,6 @@ async def load_data_callback(query, context, user_id) -> bool:
 # ==================== АВТОРИЗАЦИЯ ====================
 
 async def start_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает процесс авторизации в Google Drive"""
     drive_client = GoogleDriveClient()
     auth_url, flow = drive_client.get_auth_url()
     
@@ -84,7 +75,7 @@ async def start_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_state(context, update.effective_user.id, AdminStates.WAITING_FOR_AUTH_CODE)
     
     text = (
-        "🔑 *Требуется авторизация в Google Drive*\n\n"
+        "🔑 Требуется авторизация в Google Drive\n\n"
         "1. Перейдите по ссылке:\n"
         f"{auth_url}\n\n"
         "2. Войдите в свой Google аккаунт\n"
@@ -93,12 +84,11 @@ async def start_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "5. Введите код в ответном сообщении:"
     )
     
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(text)
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
     if not await check_admin(update, context):
         return
     
@@ -111,36 +101,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     text = (
-        "🏭 *УПРАВЛЕНИЕ БАЗОЙ ДАННЫХ*\n\n"
+        "🏭 УПРАВЛЕНИЕ БАЗОЙ ДАННЫХ\n\n"
         "Выберите раздел для работы:"
     )
     
     await update.message.reply_text(
         text,
-        reply_markup=main_menu_keyboard(user_id),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=main_menu_keyboard(user_id)
     )
 
 async def back_to_main(query, context, user_id):
-    """Возвращает в главное меню"""
     clear_user_data(context, user_id)
     set_user_state(context, user_id, AdminStates.MAIN_MENU)
     
     text = (
-        "🏭 *УПРАВЛЕНИЕ БАЗОЙ ДАННЫХ*\n\n"
+        "🏭 УПРАВЛЕНИЕ БАЗОЙ ДАННЫХ\n\n"
         "Выберите раздел для работы:"
     )
     
     await query.edit_message_text(
         text,
-        reply_markup=main_menu_keyboard(user_id),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=main_menu_keyboard(user_id)
     )
 
 # ==================== КАТЕГОРИИ ====================
 
 async def show_categories(query, context, user_id, page=1):
-    """Показывает список категорий"""
     if not await check_auth_callback(query, context, user_id):
         return
     
@@ -159,24 +145,20 @@ async def show_categories(query, context, user_id, page=1):
     set_user_state(context, user_id, AdminStates.CATEGORY_LIST)
     
     await query.edit_message_text(
-        f"📋 *КАТЕГОРИИ*\n\nСтраница {page} из {total_pages}",
-        reply_markup=categories_keyboard(page_categories, user_id, page, total_pages),
-        parse_mode=ParseMode.MARKDOWN
+        f"📋 КАТЕГОРИИ\n\nСтраница {page} из {total_pages}",
+        reply_markup=categories_keyboard(page_categories, user_id, page, total_pages)
     )
 
 async def add_category_start(query, context, user_id):
-    """Начинает добавление новой категории"""
     set_user_state(context, user_id, AdminStates.CATEGORY_ADD_NAME)
     
     await query.edit_message_text(
-        "✏️ *Добавление новой категории*\n\n"
+        "✏️ Добавление новой категории\n\n"
         "Введите название категории:",
-        reply_markup=cancel_button(user_id),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=cancel_button(user_id)
     )
 
 async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод названия категории"""
     user_id = update.effective_user.id
     
     if not text or len(text) < 2:
@@ -190,11 +172,9 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         f"✅ Категория '{text}' будет доступна при создании элементов",
         reply_markup=back_button(user_id, "categories")
     )
-
 # ==================== ИЗДЕЛИЯ ====================
 
 async def show_products(query, context, user_id, category=None, page=1):
-    """Показывает список изделий"""
     if not await check_auth_callback(query, context, user_id):
         return
     
@@ -227,13 +207,11 @@ async def show_products(query, context, user_id, category=None, page=1):
     set_user_state(context, user_id, AdminStates.PRODUCT_LIST)
     
     await query.edit_message_text(
-        f"🏗️ *ИЗДЕЛИЯ*\n\nСтраница {page} из {total_pages}",
-        reply_markup=products_keyboard(items, user_id, page, total_pages, category),
-        parse_mode=ParseMode.MARKDOWN
+        f"🏗️ ИЗДЕЛИЯ\n\nСтраница {page} из {total_pages}",
+        reply_markup=products_keyboard(items, user_id, page, total_pages, category)
     )
 
 async def show_product_detail(query, context, user_id, product_code):
-    """Показывает детальную информацию об изделии"""
     if not await check_auth_callback(query, context, user_id):
         return
     
@@ -273,44 +251,40 @@ async def show_product_detail(query, context, user_id, product_code):
             elif 'материал' in child_type:
                 materials.append(f"• {child_name} ({quantity} шт)")
     
-    text = f"🏗️ *Изделие: {product['Наименование']}*\n\n"
+    text = f"🏗️ Изделие: {product['Наименование']}\n\n"
     text += f"Код: {product['Код']}\n"
     text += f"Категория: {product.get('Категории', 'не указана')}\n"
     text += f"Цена производства: {product.get('Цена производства', '0 ISK')}\n"
     text += f"Кратность: {product.get('Кратность', 1)}\n\n"
     
     if nodes:
-        text += "*🔩 Узлы в составе:*\n" + "\n".join(nodes) + "\n\n"
+        text += "🔩 Узлы в составе:\n" + "\n".join(nodes) + "\n\n"
     else:
-        text += "*🔩 Узлы в составе:* нет\n\n"
+        text += "🔩 Узлы в составе: нет\n\n"
     
     if materials:
-        text += "*⚙️ Материалы в составе:*\n" + "\n".join(materials) + "\n"
+        text += "⚙️ Материалы в составе:\n" + "\n".join(materials) + "\n"
     else:
-        text += "*⚙️ Материалы в составе:* нет\n"
+        text += "⚙️ Материалы в составе: нет\n"
     
     await query.edit_message_text(
         text,
-        reply_markup=product_detail_keyboard(user_id, product_code),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=product_detail_keyboard(user_id, product_code)
     )
 
 async def add_product_start(query, context, user_id):
-    """Начинает добавление нового изделия"""
     user_data = get_user_data(context, user_id)
     user_data['new_product'] = {}
     set_user_state(context, user_id, AdminStates.PRODUCT_ADD_CODE)
     
     await query.edit_message_text(
-        "✏️ *Добавление нового изделия*\n\n"
+        "✏️ Добавление нового изделия\n\n"
         "Шаг 1 из 5: Введите код изделия\n"
         "(например: `изд. 010`)",
-        reply_markup=cancel_button(user_id),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=cancel_button(user_id)
     )
 
 async def add_product_code(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод кода изделия"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -337,7 +311,6 @@ async def add_product_code(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     )
 
 async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод названия изделия"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -373,7 +346,6 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     )
 
 async def select_category_callback(query, context, user_id, category):
-    """Обрабатывает выбор категории"""
     user_data = get_user_data(context, user_id)
     
     if category == "skip":
@@ -390,7 +362,6 @@ async def select_category_callback(query, context, user_id, category):
     )
 
 async def add_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод цены производства"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -403,7 +374,6 @@ async def add_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
 
 async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод кратности и сохраняет изделие"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -446,11 +416,9 @@ async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT
         )
     
     clear_user_data(context, user_id)
-
 # ==================== МАТЕРИАЛЫ ====================
 
 async def show_materials(query, context, user_id, page=1):
-    """Показывает список материалов"""
     if not await check_auth_callback(query, context, user_id):
         return
     
@@ -464,13 +432,11 @@ async def show_materials(query, context, user_id, page=1):
     set_user_state(context, user_id, AdminStates.MATERIAL_LIST)
     
     await query.edit_message_text(
-        f"⚙️ *МАТЕРИАЛЫ*\n\nСтраница {page} из {total_pages}",
-        reply_markup=materials_keyboard(materials, user_id, page, total_pages),
-        parse_mode=ParseMode.MARKDOWN
+        f"⚙️ МАТЕРИАЛЫ\n\nСтраница {page} из {total_pages}",
+        reply_markup=materials_keyboard(materials, user_id, page, total_pages)
     )
 
 async def show_material_detail(query, context, user_id, material_code):
-    """Показывает детальную информацию о материале"""
     if not await check_auth_callback(query, context, user_id):
         return
     
@@ -487,12 +453,12 @@ async def show_material_detail(query, context, user_id, material_code):
         excel_handler.df_specifications['Потомок'] == material_code
     ]
     
-    text = f"⚙️ *Материал: {material['Наименование']}*\n\n"
+    text = f"⚙️ Материал: {material['Наименование']}\n\n"
     text += f"Код: {material['Код']}\n"
     text += f"Категория: {material.get('Категории', 'не указана')}\n\n"
     
     if len(used_in) > 0:
-        text += "*Используется в:*\n"
+        text += "Используется в:\n"
         for _, spec in used_in.iterrows():
             parent_code = spec['Родитель']
             quantity = spec['Количество']
@@ -501,30 +467,26 @@ async def show_material_detail(query, context, user_id, material_code):
             if parent:
                 text += f"• {parent['Наименование']} ({quantity} шт)\n"
     else:
-        text += "*Используется в:* нигде"
+        text += "Используется в: нигде"
     
     await query.edit_message_text(
         text,
-        reply_markup=material_detail_keyboard(user_id, material_code),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=material_detail_keyboard(user_id, material_code)
     )
 
 async def add_material_start(query, context, user_id):
-    """Начинает добавление нового материала"""
     user_data = get_user_data(context, user_id)
     user_data['new_material'] = {}
     set_user_state(context, user_id, AdminStates.MATERIAL_ADD_CODE)
     
     await query.edit_message_text(
-        "✏️ *Добавление нового материала*\n\n"
+        "✏️ Добавление нового материала\n\n"
         "Шаг 1 из 3: Введите код материала\n"
         "(например: `мат 030`)",
-        reply_markup=cancel_button(user_id),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=cancel_button(user_id)
     )
 
 async def add_material_code(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод кода материала"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -551,7 +513,6 @@ async def add_material_code(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
 
 async def add_material_name(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод названия материала"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -584,11 +545,9 @@ async def add_material_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
 
 async def select_material_category_callback(query, context, user_id, category):
-    """Обрабатывает выбор категории для материала"""
     await save_material(query, context, user_id, category)
 
 async def save_material(update_or_query, context, user_id, category):
-    """Сохраняет новый материал"""
     user_data = get_user_data(context, user_id)
     new_material = user_data.get('new_material', {})
     
@@ -621,7 +580,6 @@ async def save_material(update_or_query, context, user_id, category):
 # ==================== ПРИВЯЗКА УЗЛОВ ====================
 
 async def link_node_start(query, context, user_id, product_code):
-    """Начинает процесс привязки узла к изделию"""
     user_data = get_user_data(context, user_id)
     user_data['link_product'] = product_code
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_SELECT)
@@ -637,14 +595,12 @@ async def link_node_start(query, context, user_id, product_code):
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
     await query.edit_message_text(
-        "🔗 *Привязка узла к изделию*\n\n"
+        "🔗 Привязка узла к изделию\n\n"
         "Выберите узел из списка:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def select_node_callback(query, context, user_id, node_code):
-    """Обрабатывает выбор узла"""
     user_data = get_user_data(context, user_id)
     user_data['link_node'] = node_code
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
@@ -655,7 +611,6 @@ async def select_node_callback(query, context, user_id, node_code):
     )
 
 async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод количества и создаёт связь"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -698,7 +653,6 @@ async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE,
 # ==================== ПРИВЯЗКА МАТЕРИАЛОВ ====================
 
 async def link_material_start(query, context, user_id, parent_code, parent_type='product'):
-    """Начинает процесс привязки материала к изделию или узлу"""
     user_data = get_user_data(context, user_id)
     user_data['link_parent'] = parent_code
     user_data['link_parent_type'] = parent_type
@@ -715,14 +669,12 @@ async def link_material_start(query, context, user_id, parent_code, parent_type=
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
     await query.edit_message_text(
-        "⚙️ *Привязка материала*\n\n"
+        "⚙️ Привязка материала\n\n"
         "Выберите материал из списка:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def select_material_callback(query, context, user_id, material_code):
-    """Обрабатывает выбор материала"""
     user_data = get_user_data(context, user_id)
     user_data['link_material'] = material_code
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
@@ -733,7 +685,6 @@ async def select_material_callback(query, context, user_id, material_code):
     )
 
 async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Обрабатывает ввод количества и создаёт связь"""
     user_id = update.effective_user.id
     user_data = get_user_data(context, user_id)
     
@@ -776,7 +727,6 @@ async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_T
 # ==================== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ====================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает текстовые сообщения"""
     user_id = update.effective_user.id
     logger.info(f"📨 Сообщение от {user_id}: {update.message.text[:50]}...")
     
@@ -784,7 +734,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = get_user_state(context, user_id)
     text = update.message.text.strip()
     
-    # Обработка кода авторизации
     if state == AdminStates.WAITING_FOR_AUTH_CODE:
         flow = user_data.get('auth_flow')
         if not flow:
@@ -799,12 +748,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(message)
         return
     
-    # Обработка добавления категории
     if state == AdminStates.CATEGORY_ADD_NAME:
         await add_category_name(update, context, text)
         return
     
-    # Обработка добавления изделия
     if state == AdminStates.PRODUCT_ADD_CODE:
         await add_product_code(update, context, text)
         return
@@ -818,7 +765,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_product_multiplicity(update, context, text)
         return
     
-    # Обработка добавления материала
     if state == AdminStates.MATERIAL_ADD_CODE:
         await add_material_code(update, context, text)
         return
@@ -826,7 +772,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_material_name(update, context, text)
         return
     
-    # Обработка привязок
     if state == AdminStates.PRODUCT_LINK_NODE_QUANTITY:
         await link_node_quantity(update, context, text)
         return
@@ -839,10 +784,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❓ Я ожидаю команды из меню. Используйте /start",
         reply_markup=main_menu_keyboard(user_id)
     )
+
 # ==================== ОБРАБОТЧИК КНОПОК ====================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Основной обработчик нажатий на inline-кнопки"""
     query = update.callback_query
     await query.answer()
     
@@ -858,7 +803,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     action = data.replace(f"user_{user_id}_", "")
     
-    # ===== ГЛАВНОЕ МЕНЮ =====
     if action == "main":
         await back_to_main(query, context, user_id)
         return
@@ -867,7 +811,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("👋 До свидания!")
         return
     
-    # ===== КАТЕГОРИИ =====
     if action == "categories":
         await show_categories(query, context, user_id, 1)
         return
@@ -881,7 +824,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_category_start(query, context, user_id)
         return
     
-    # ===== ИЗДЕЛИЯ =====
     if action == "products":
         await show_products(query, context, user_id, "Все", 1)
         return
@@ -912,7 +854,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await link_material_start(query, context, user_id, product_code, 'product')
         return
     
-    # ===== МАТЕРИАЛЫ =====
     if action == "materials":
         await show_materials(query, context, user_id, 1)
         return
@@ -931,7 +872,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_material_detail(query, context, user_id, material_code)
         return
     
-    # ===== ВЫБОР КАТЕГОРИИ ПРИ ДОБАВЛЕНИИ =====
     if action.startswith("select_cat_"):
         category = action.replace("select_cat_", "")
         await select_category_callback(query, context, user_id, category)
@@ -942,7 +882,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await select_material_category_callback(query, context, user_id, category)
         return
     
-    # ===== ВЫБОР УЗЛА/МАТЕРИАЛА ПРИ ПРИВЯЗКЕ =====
     if action.startswith("select_node_"):
         node_code = action.replace("select_node_", "")
         await select_node_callback(query, context, user_id, node_code)
@@ -953,7 +892,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await select_material_callback(query, context, user_id, material_code)
         return
     
-    # ===== НАЗАД =====
     if action == "back_to_main":
         await back_to_main(query, context, user_id)
         return
@@ -977,14 +915,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_product_detail(query, context, user_id, product_code)
         return
     
-    # ===== ОТМЕНА =====
     if action == "cancel":
         clear_user_data(context, user_id)
         set_user_state(context, user_id, AdminStates.MAIN_MENU)
         await query.edit_message_text("❌ Действие отменено")
         return
     
-    # ===== ПУСТЫЕ ДЕЙСТВИЯ =====
     if action == "noop":
         return
     
