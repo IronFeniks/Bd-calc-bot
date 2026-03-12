@@ -1,10 +1,8 @@
 from telegram.ext import ContextTypes
 
-# Класс для хранения состояний FSM (Finite State Machine)
 class AdminStates:
     """Класс с константами состояний для бота-администратора"""
     
-    # Главное меню
     MAIN_MENU = 0
     
     # Состояния для категорий
@@ -49,9 +47,8 @@ class AdminStates:
     
     # Состояния для подтверждения
     CONFIRM_ACTION = 90
-    WAITING_FOR_AUTH_CODE = 91  # для авторизации Google
+    WAITING_FOR_AUTH_CODE = 91
 
-# Вспомогательная функция для получения данных пользователя
 def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> dict:
     """Получает или создаёт словарь данных для пользователя"""
     if 'user_data' not in context.chat_data:
