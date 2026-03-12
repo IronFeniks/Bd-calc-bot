@@ -1,6 +1,5 @@
 import os
 import json
-import pickle
 import logging
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -8,7 +7,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 import io
-import tempfile
 from config import CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, TOKEN_FILE
 
 logger = logging.getLogger(__name__)
@@ -78,7 +76,7 @@ class GoogleDriveClient:
         return auth_url, flow
     
     def exchange_code(self, code, flow):
-        """Обменивает 코드 подтверждения на токены"""
+        """Обменивает код подтверждения на токены"""
         try:
             flow.fetch_token(code=code)
             self.creds = flow.credentials
