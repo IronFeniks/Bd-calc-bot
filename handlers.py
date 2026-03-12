@@ -386,6 +386,19 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         "(например: `5400000000 ISK`)",
         reply_markup=cancel_button(user_id)
     )
+    
+    if category == "skip":
+        user_data['new_product']['category'] = ''
+    else:
+        user_data['new_product']['category'] = category
+    
+    set_user_state(context, user_id, AdminStates.PRODUCT_ADD_PRICE)
+    
+    await query.edit_message_text(
+        "Шаг 4 из 5: Введите цену производства\n"
+        "(например: `5400000000 ISK`)",
+        reply_markup=cancel_button(user_id)
+    )
 
 async def add_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     """Обрабатывает ввод цены производства"""
