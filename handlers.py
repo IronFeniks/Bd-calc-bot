@@ -151,7 +151,6 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
     
     clear_user_data(context, user_id)
-
 # ==================== ИЗДЕЛИЯ ====================
 
 async def show_products(query, context, user_id, category=None, page=1):
