@@ -1,224 +1,341 @@
 import pandas as pd
 import os
 import logging
-from config import EXCEL_FILE, DATA_DIR
+from typing import Tuple, List, Dict, Optional
+import re
 
 logger = logging.getLogger(__name__)
 
 class ExcelHandler:
-    """Класс для работы с локальным Excel файлом"""
-    
-    def __init__(self):
+    def __init__(self, file_path: str):
+        self.file_path = file_path
         self.df_nomenclature = None
         self.df_specifications = None
-        self.is_loaded = False
-        self._ensure_data_dir()
+        self.load_data()
     
-    def _ensure_data_dir(self):
-        """Создаёт папку data, если её нет"""
-        os.makedirs(DATA_DIR, exist_ok=True)
-        logger.info(f"✅ Папка {DATA_DIR} готова")
-    
-    def load_data(self):
-        """Загружает данные из локального Excel файла"""
+    def load_data(self) -> Tuple[bool, str]:
+        """Загружает данные из Excel файла"""
         try:
-            if not os.path.exists(EXCEL_FILE):
-                return False, f"❌ Файл {EXCEL_FILE} не найден"
+            if not os.path.exists(self.file_path):
+                return False, f"❌ Файл не найден: {self.file_path}"
             
-            excel_file = pd.ExcelFile(EXCEL_FILE)
+            # Читаем все листы
+            excel_file = pd.ExcelFile(self.file_path)
+            
+            if 'Номенклатура' not in excel_file.sheet_names:
+                return False, "❌ В файле нет листа 'Номенклатура'"
+            
+            if 'Спецификации' not in excel_file.sheet_names:
+                return False, "❌ В файле нет листа 'Спецификации'"
+            
             self.df_nomenclature = pd.read_excel(excel_file, sheet_name='Номенклатура')
             self.df_specifications = pd.read_excel(excel_file, sheet_name='Спецификации')
             
-            self.is_loaded = True
-            logger.info(f"✅ Загружено: номенклатура {len(self.df_nomenclature)} записей")
-            logger.info(f"✅ Загружено: спецификации {len(self.df_specifications)} записей")
+            # Заполняем NaN пустыми строками
+            self.df_nomenclature = self.df_nomenclature.fillna('')
+            self.df_specifications = self.df_specifications.fillna('')
+            
+            logger.info(f"✅ Загружено: {len(self.df_nomenclature)} записей номенклатуры, {len(self.df_specifications)} спецификаций")
             return True, "✅ Данные загружены"
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка загрузки: {e}")
-            return False, f"❌ Ошибка: {e}"
+            logger.error(f"Ошибка загрузки Excel: {e}")
+            return False, f"❌ Ошибка загрузки: {e}"
     
-    def save_data(self):
-        """Сохраняет изменения обратно в файл"""
-        if not self.is_loaded:
-            return False, "❌ Нет загруженных данных"
-        
+    def save_data(self) -> Tuple[bool, str]:
+        """Сохраняет данные в Excel файл"""
         try:
-            with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
+            with pd.ExcelWriter(self.file_path, engine='openpyxl') as writer:
                 self.df_nomenclature.to_excel(writer, sheet_name='Номенклатура', index=False)
                 self.df_specifications.to_excel(writer, sheet_name='Спецификации', index=False)
             
-            logger.info("✅ Данные сохранены")
+            logger.info("✅ Данные сохранены в Excel")
             return True, "✅ Данные сохранены"
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения: {e}")
+            logger.error(f"Ошибка сохранения Excel: {e}")
+            return False, f"❌ Ошибка сохранения: {e}"
+    
+    # ==================== АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ КОДОВ ====================
+    
+    def _extract_number(self, code: str, prefix: str) -> int:
+        """Извлекает числовую часть из кода"""
+        try:
+            # Убираем префикс и пробелы
+            num_part = code.replace(prefix, '').strip()
+            return int(num_part)
+        except:
+            return 0
+    
+    def _get_next_code(self, prefix: str, type_name: str) -> str:
+        """Генерирует следующий код для указанного типа"""
+        # Фильтруем по типу
+        mask = self.df_nomenclature['Тип'].str.lower() == type_name.lower()
+        type_items = self.df_nomenclature[mask]
+        
+        max_num = 0
+        for _, row in type_items.iterrows():
+            code = row['Код']
+            if code.startswith(prefix):
+                num = self._extract_number(code, prefix)
+                if num > max_num:
+                    max_num = num
+        
+        next_num = max_num + 1
+        
+        # Определяем формат (3 или 4 цифры)
+        if next_num > 999:
+            return f"{prefix} {next_num}"
+        else:
+            return f"{prefix} {next_num:03d}"
+    
+    def get_next_product_code(self) -> str:
+        """Генерирует следующий код для изделия"""
+        return self._get_next_code('изд.', 'изделие')
+    
+    def get_next_node_code(self) -> str:
+        """Генерирует следующий код для узла"""
+        return self._get_next_code('узел', 'узел')
+    
+    def get_next_material_code(self) -> str:
+        """Генерирует следующий код для материала"""
+        return self._get_next_code('мат', 'материал')
+    
+    # ==================== ДОБАВЛЕНИЕ (с авто-кодом) ====================
+    
+    def add_product(self, name: str, type_name: str, category: str = '', 
+                   price: str = '0 ISK', multiplicity: int = 1) -> Tuple[bool, str, str]:
+        """Добавляет новое изделие/узел с автоматическим кодом"""
+        try:
+            # Генерируем код в зависимости от типа
+            if type_name.lower() == 'изделие':
+                code = self.get_next_product_code()
+            elif type_name.lower() == 'узел':
+                code = self.get_next_node_code()
+            else:
+                return False, f"❌ Неизвестный тип: {type_name}", ""
+            
+            # Создаем новую запись
+            new_row = pd.DataFrame([{
+                'Код': code,
+                'Наименование': name,
+                'Тип': type_name,
+                'Категории': category,
+                'Цена производства': price,
+                'Кратность': multiplicity
+            }])
+            
+            self.df_nomenclature = pd.concat([self.df_nomenclature, new_row], ignore_index=True)
+            
+            return True, f"✅ {type_name} добавлено с кодом {code}", code
+            
+        except Exception as e:
+            logger.error(f"Ошибка добавления {type_name}: {e}")
+            return False, f"❌ Ошибка: {e}", ""
+    
+    def add_material(self, name: str, category: str = '') -> Tuple[bool, str, str]:
+        """Добавляет новый материал с автоматическим кодом"""
+        try:
+            code = self.get_next_material_code()
+            
+            new_row = pd.DataFrame([{
+                'Код': code,
+                'Наименование': name,
+                'Тип': 'материал',
+                'Категории': category,
+                'Цена производства': '',
+                'Кратность': ''
+            }])
+            
+            self.df_nomenclature = pd.concat([self.df_nomenclature, new_row], ignore_index=True)
+            
+            return True, f"✅ Материал добавлен с кодом {code}", code
+            
+        except Exception as e:
+            logger.error(f"Ошибка добавления материала: {e}")
+            return False, f"❌ Ошибка: {e}", ""
+    
+    # ==================== РЕДАКТИРОВАНИЕ ====================
+    
+    def update_product_field(self, code: str, field: str, value) -> Tuple[bool, str]:
+        """Обновляет конкретное поле изделия/материала"""
+        try:
+            mask = self.df_nomenclature['Код'] == code
+            if not mask.any():
+                return False, f"❌ Запись с кодом {code} не найдена"
+            
+            self.df_nomenclature.loc[mask, field] = value
+            return True, f"✅ Поле '{field}' обновлено"
+            
+        except Exception as e:
+            logger.error(f"Ошибка обновления: {e}")
             return False, f"❌ Ошибка: {e}"
     
-    def get_unique_categories(self):
-        """Возвращает список уникальных категорий"""
-        if not self.is_loaded:
-            return []
-        
-        categories = self.df_nomenclature['Категории'].dropna().unique().tolist()
-        return sorted([str(c) for c in categories if str(c).strip()])
+    def get_product_by_code(self, code: str) -> Optional[Dict]:
+        """Возвращает запись по коду"""
+        mask = self.df_nomenclature['Код'] == code
+        if mask.any():
+            return self.df_nomenclature[mask].iloc[0].to_dict()
+        return None
     
-    def get_products_by_category(self, category, page=0, items_per_page=10):
-        """Возвращает список изделий в категории с пагинацией"""
-        if not self.is_loaded:
-            return [], 0
-        
-        mask = (self.df_nomenclature['Категории'] == category) & \
-               (self.df_nomenclature['Тип'].str.lower().isin(['изделие', 'узел']))
-        
-        filtered = self.df_nomenclature[mask]
-        total = len(filtered)
-        
-        start = page * items_per_page
-        end = min(start + items_per_page, total)
-        
-        result = []
-        for idx, row in filtered.iloc[start:end].iterrows():
-            result.append({
-                'code': row['Код'],
-                'name': row['Наименование']
-            })
-        
-        return result, total
+    # ==================== УДАЛЕНИЕ С ПРОВЕРКОЙ ====================
     
-    def get_materials(self, page=0, items_per_page=10):
-        """Возвращает список материалов с пагинацией"""
-        if not self.is_loaded:
-            return [], 0
+    def check_product_usage(self, code: str) -> Tuple[bool, List[str]]:
+        """Проверяет, используется ли продукт в спецификациях"""
+        used_in = []
         
-        mask = self.df_nomenclature['Тип'].str.lower() == 'материал'
-        filtered = self.df_nomenclature[mask]
-        total = len(filtered)
+        # Ищем как родителя (изделие/узел)
+        as_parent = self.df_specifications[self.df_specifications['Родитель'] == code]
+        for _, spec in as_parent.iterrows():
+            child = spec['Потомок']
+            child_name = self._get_name_by_code(child)
+            used_in.append(f"📦 содержит: {child_name} ({child}) - {spec['Количество']} шт")
         
-        start = page * items_per_page
-        end = min(start + items_per_page, total)
+        # Ищем как потомка (материал/узел)
+        as_child = self.df_specifications[self.df_specifications['Потомок'] == code]
+        for _, spec in as_child.iterrows():
+            parent = spec['Родитель']
+            parent_name = self._get_name_by_code(parent)
+            used_in.append(f"🔧 используется в: {parent_name} ({parent}) - {spec['Количество']} шт")
         
-        result = []
-        for idx, row in filtered.iloc[start:end].iterrows():
-            result.append({
-                'code': row['Код'],
-                'name': row['Наименование']
-            })
-        
-        return result, total
+        return len(used_in) > 0, used_in
     
-    def get_product_by_code(self, code):
-        """Возвращает изделие/узел по коду"""
-        if not self.is_loaded:
-            return None
-        
-        row = self.df_nomenclature[self.df_nomenclature['Код'] == code]
-        if len(row) == 0:
-            return None
-        
-        return row.iloc[0].to_dict()
+    def _get_name_by_code(self, code: str) -> str:
+        """Получает наименование по коду"""
+        mask = self.df_nomenclature['Код'] == code
+        if mask.any():
+            return self.df_nomenclature[mask].iloc[0]['Наименование']
+        return "Неизвестно"
     
-    def add_product(self, code, name, type_name, category, price='0 ISK', multiplicity=1):
-        """Добавляет новое изделие/узел"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        if code in self.df_nomenclature['Код'].values:
-            return False, f"❌ Код {code} уже существует"
-        
-        new_row = {
-            'Код': code,
-            'Наименование': name,
-            'Тип': type_name,
-            'Цена производства': price,
-            'Категории': category,
-            'Кратность': multiplicity
-        }
-        
-        self.df_nomenclature = pd.concat([self.df_nomenclature, pd.DataFrame([new_row])], ignore_index=True)
-        
-        return True, f"✅ {type_name} '{name}' успешно добавлен"
-    
-    def add_material(self, code, name, category=''):
-        """Добавляет новый материал"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        if code in self.df_nomenclature['Код'].values:
-            return False, f"❌ Код {code} уже существует"
-        
-        new_row = {
-            'Код': code,
-            'Наименование': name,
-            'Тип': 'материал',
-            'Цена производства': '',
-            'Категории': category,
-            'Кратность': ''
-        }
-        
-        self.df_nomenclature = pd.concat([self.df_nomenclature, pd.DataFrame([new_row])], ignore_index=True)
-        
-        return True, f"✅ Материал '{name}' успешно добавлен"
-    
-    def link_node_to_product(self, product_code, node_code, quantity):
-        """Привязывает узел к изделию"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        mask = (self.df_specifications['Родитель'] == product_code) & \
-               (self.df_specifications['Потомок'] == node_code)
-        
-        if len(self.df_specifications[mask]) > 0:
-            return False, "❌ Такая связь уже существует"
-        
-        new_row = {
-            'Родитель': product_code,
-            'Потомок': node_code,
-            'Количество': quantity
-        }
-        
-        self.df_specifications = pd.concat([self.df_specifications, pd.DataFrame([new_row])], ignore_index=True)
-        
-        return True, f"✅ Узел привязан с количеством {quantity}"
-    
-    def link_material_to_product(self, parent_code, material_code, quantity):
-        """Привязывает материал к изделию или узлу"""
-        if not self.is_loaded:
-            return False, "❌ Данные не загружены"
-        
-        mask = (self.df_specifications['Родитель'] == parent_code) & \
-               (self.df_specifications['Потомок'] == material_code)
-        
-        if len(self.df_specifications[mask]) > 0:
-            return False, "❌ Такая связь уже существует"
-        
-        new_row = {
-            'Родитель': parent_code,
-            'Потомок': material_code,
-            'Количество': quantity
-        }
-        
-        self.df_specifications = pd.concat([self.df_specifications, pd.DataFrame([new_row])], ignore_index=True)
-        
-        return True, f"✅ Материал привязан с количеством {quantity}"
-    
-    def get_product_children(self, parent_code):
-        """Возвращает список всех потомков для родителя"""
-        if not self.is_loaded:
-            return []
-        
-        specs = self.df_specifications[self.df_specifications['Родитель'] == parent_code]
-        result = []
-        
-        for _, spec in specs.iterrows():
-            child_code = spec['Потомок']
-            quantity = spec['Количество']
+    def delete_product(self, code: str) -> Tuple[bool, str]:
+        """Удаляет продукт и все связанные спецификации"""
+        try:
+            # Получаем информацию о продукте
+            product = self.get_product_by_code(code)
+            if not product:
+                return False, f"❌ Запись с кодом {code} не найдена"
             
-            child = self.get_product_by_code(child_code)
-            if child:
-                result.append({
-                    'code': child_code,
-                    'name': child['Наименование'],
-                    'type': child['Тип'],
-                    'quantity': quantity
-                })
+            product_name = product['Наименование']
+            product_type = product['Тип']
+            
+            # Удаляем из номенклатуры
+            self.df_nomenclature = self.df_nomenclature[self.df_nomenclature['Код'] != code]
+            
+            # Удаляем все спецификации, где этот код является родителем или потомком
+            before_count = len(self.df_specifications)
+            self.df_specifications = self.df_specifications[
+                (self.df_specifications['Родитель'] != code) & 
+                (self.df_specifications['Потомок'] != code)
+            ]
+            after_count = len(self.df_specifications)
+            deleted_specs = before_count - after_count
+            
+            return True, f"✅ {product_type} '{product_name}' удален\nУдалено связанных спецификаций: {deleted_specs}"
+            
+        except Exception as e:
+            logger.error(f"Ошибка удаления: {e}")
+            return False, f"❌ Ошибка: {e}"
+    
+    # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+    
+    def get_unique_categories(self) -> List[str]:
+        """Возвращает список уникальных категорий"""
+        categories = set()
+        for cat in self.df_nomenclature['Категории']:
+            if cat and str(cat).strip():
+                # Разделяем по " > " если там несколько уровней
+                parts = str(cat).split(' > ')
+                for part in parts:
+                    if part.strip():
+                        categories.add(part.strip())
+        return sorted(list(categories))
+    
+    def get_products_by_type(self, type_name: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
+        """Возвращает продукты определенного типа с пагинацией"""
+        mask = self.df_nomenclature['Тип'].str.lower() == type_name.lower()
+        filtered = self.df_nomenclature[mask]
         
-        return result
+        total = len(filtered)
+        start = page * per_page
+        end = min(start + per_page, total)
+        
+        items = []
+        for _, row in filtered.iloc[start:end].iterrows():
+            items.append({
+                'code': row['Код'],
+                'name': row['Наименование'],
+                'category': row.get('Категории', '')
+            })
+        
+        return items, total
+    
+    def get_products_by_category(self, category: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
+        """Возвращает продукты из категории с пагинацией"""
+        mask = self.df_nomenclature['Категории'].str.contains(category, na=False)
+        filtered = self.df_nomenclature[mask]
+        
+        total = len(filtered)
+        start = page * per_page
+        end = min(start + per_page, total)
+        
+        items = []
+        for _, row in filtered.iloc[start:end].iterrows():
+            items.append({
+                'code': row['Код'],
+                'name': row['Наименование'],
+                'category': row.get('Категории', '')
+            })
+        
+        return items, total
+    
+    def link_node_to_product(self, parent_code: str, node_code: str, quantity: int) -> Tuple[bool, str]:
+        """Привязывает узел к изделию"""
+        try:
+            # Проверяем, нет ли уже такой связи
+            existing = self.df_specifications[
+                (self.df_specifications['Родитель'] == parent_code) & 
+                (self.df_specifications['Потомок'] == node_code)
+            ]
+            
+            if not existing.empty:
+                return False, "❌ Такая связь уже существует"
+            
+            new_row = pd.DataFrame([{
+                'Родитель': parent_code,
+                'Потомок': node_code,
+                'Количество': quantity
+            }])
+            
+            self.df_specifications = pd.concat([self.df_specifications, new_row], ignore_index=True)
+            
+            return True, "✅ Узел привязан"
+            
+        except Exception as e:
+            logger.error(f"Ошибка привязки узла: {e}")
+            return False, f"❌ Ошибка: {e}"
+    
+    def link_material_to_product(self, parent_code: str, material_code: str, quantity: int) -> Tuple[bool, str]:
+        """Привязывает материал к изделию/узлу"""
+        try:
+            # Проверяем, нет ли уже такой связи
+            existing = self.df_specifications[
+                (self.df_specifications['Родитель'] == parent_code) & 
+                (self.df_specifications['Потомок'] == material_code)
+            ]
+            
+            if not existing.empty:
+                return False, "❌ Такая связь уже существует"
+            
+            new_row = pd.DataFrame([{
+                'Родитель': parent_code,
+                'Потомок': material_code,
+                'Количество': quantity
+            }])
+            
+            self.df_specifications = pd.concat([self.df_specifications, new_row], ignore_index=True)
+            
+            return True, "✅ Материал привязан"
+            
+        except Exception as e:
+            logger.error(f"Ошибка привязки материала: {e}")
+            return False, f"❌ Ошибка: {e}"
