@@ -2,8 +2,9 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import hashlib
+import os
 
-from config import ADMIN_IDS, ITEMS_PER_PAGE
+from config import ADMIN_IDS, ITEMS_PER_PAGE, DATA_DIR
 from keyboards import (
     main_menu_keyboard, categories_keyboard, products_keyboard,
     materials_keyboard, nodes_keyboard, product_detail_keyboard,
@@ -141,10 +142,12 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         )
         return
     
-    # Категории хранятся только в записях, поэтому просто сообщаем об успехе
+    # Добавляем категорию через ExcelHandler
+    success, message = excel_handler.add_category(text)
+    
     await update.message.reply_text(
-        f"✅ Категория '{text}' будет доступна при создании элементов",
-        reply_markup=back_button(user_id, "categories")
+        message,
+        reply_markup=back_button(user_id, "categories") if success else cancel_button(user_id)
     )
     
     clear_user_data(context, user_id)
@@ -313,6 +316,10 @@ async def add_item_name(update: Update, context: ContextTypes.DEFAULT_TYPE, text
     for cat in categories:
         cat_short = cat[:20]
         callback = f"user_{user_id}_cat_{cat_short}"
+        # Проверяем длину
+        if len(callback.encode()) > 64:
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_cat_{cat_hash}"
         keyboard.append([InlineKeyboardButton(cat, callback_data=callback)])
     
     keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_cat_skip")])
@@ -338,30 +345,45 @@ async def select_category_callback(query, context, user_id, category, item_type)
     """Обработка выбора категории для изделия/узла"""
     user_data = get_user_data(context, user_id)
     
+    # Восстанавливаем полное название категории
+    categories = excel_handler.get_unique_categories()
+    full_category = ''
+    
     if category != "skip":
-        # Восстанавливаем полное название категории
-        categories = excel_handler.get_unique_categories()
+        # Сначала проверяем точное совпадение короткого имени
         for cat in categories:
             cat_short = cat[:20]
             if cat_short == category:
-                user_data['new_item']['category'] = cat
+                full_category = cat
                 break
         else:
-            user_data['new_item']['category'] = category
-    else:
-        user_data['new_item']['category'] = ''
+            # Если не нашли, проверяем по хэшу
+            for cat in categories:
+                cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+                if cat_hash == category:
+                    full_category = cat
+                    break
+            else:
+                full_category = category
     
-    # Переходим к следующему шагу
+    user_data['new_item']['category'] = full_category
+    
+    # Переходим к следующему шагу в зависимости от типа
     if item_type == 'изделие':
         set_user_state(context, user_id, AdminStates.PRODUCT_ADD_PRICE)
         await query.edit_message_text(
             "Шаг 3 из 4: Введите цену производства\n(например: `5400000000 ISK`)",
             reply_markup=cancel_button(user_id)
         )
-    else:  # узел
+    elif item_type == 'узел':
         set_user_state(context, user_id, AdminStates.NODE_ADD_PRICE)
         await query.edit_message_text(
             "Шаг 3 из 3: Введите цену производства\n(например: `5400000000 ISK`)",
+            reply_markup=cancel_button(user_id)
+        )
+    else:
+        await query.edit_message_text(
+            "❌ Неизвестный тип элемента",
             reply_markup=cancel_button(user_id)
         )
 
@@ -455,6 +477,7 @@ async def save_item(update_or_query, context, user_id, item_type: str):
             )
     
     clear_user_data(context, user_id)
+
 # ==================== МАТЕРИАЛЫ ====================
 
 async def show_materials(query, context, user_id, page=1):
@@ -551,6 +574,9 @@ async def add_material_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     for cat in categories:
         cat_short = cat[:20]
         callback = f"user_{user_id}_matcat_{cat_short}"
+        if len(callback.encode()) > 64:
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_matcat_{cat_hash}"
         keyboard.append([InlineKeyboardButton(cat, callback_data=callback)])
     
     keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_matcat_skip")])
@@ -577,9 +603,12 @@ async def save_material(update_or_query, context, user_id, category):
         categories = excel_handler.get_unique_categories()
         for cat in categories:
             cat_short = cat[:20]
-            if cat_short == category:
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            if cat_short == category or cat_hash == category:
                 category = cat
                 break
+        else:
+            category = category if category != "skip" else ''
     
     # Добавляем в базу
     success, message, code = excel_handler.add_material(
@@ -675,6 +704,16 @@ async def edit_field_start(query, context, user_id, field, item_code):
         return
     
     user_data = get_user_data(context, user_id)
+    
+    def field_mapping(field: str) -> str:
+        mapping = {
+            'name': 'Наименование',
+            'category': 'Категории',
+            'price': 'Цена производства',
+            'multiplicity': 'Кратность'
+        }
+        return mapping.get(field, field)
+    
     user_data['editing_field'] = {
         'code': full_code,
         'field': field,
@@ -706,16 +745,6 @@ async def edit_field_start(query, context, user_id, field, item_code):
         reply_markup=cancel_button(user_id)
     )
 
-def field_mapping(field: str) -> str:
-    """Маппинг названий полей"""
-    mapping = {
-        'name': 'Наименование',
-        'category': 'Категории',
-        'price': 'Цена производства',
-        'multiplicity': 'Кратность'
-    }
-    return mapping.get(field, field)
-
 async def edit_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     """Сохранение отредактированного поля"""
     user_id = update.effective_user.id
@@ -741,6 +770,16 @@ async def edit_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     else:
         value = text
     
+    # Маппинг полей
+    def field_mapping(field: str) -> str:
+        mapping = {
+            'name': 'Наименование',
+            'category': 'Категории',
+            'price': 'Цена производства',
+            'multiplicity': 'Кратность'
+        }
+        return mapping.get(field, field)
+    
     # Обновляем в базе
     field_name = field_mapping(editing['field'])
     success, message = excel_handler.update_product_field(editing['code'], field_name, value)
@@ -757,7 +796,7 @@ async def edit_field_value(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         
         # Возвращаемся к деталям
         item = excel_handler.get_product_by_code(editing['code'])
-        if item['Тип'].lower() == 'материал':
+        if item and item['Тип'].lower() == 'материал':
             await update.message.reply_text(
                 response_text,
                 reply_markup=back_button(user_id, f"material_{editing['code']}")
@@ -893,6 +932,9 @@ async def link_node_start(query, context, user_id, product_code):
     keyboard = []
     for node in nodes[:20]:  # Ограничиваем 20 для избежания длинного сообщения
         callback = f"user_{user_id}_selnode_{node['code'][:15]}"
+        if len(callback.encode()) > 64:
+            node_hash = hashlib.md5(node['code'].encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_selnode_{node_hash}"
         keyboard.append([InlineKeyboardButton(
             f"{node['code']} - {node['name'][:30]}",
             callback_data=callback
@@ -930,6 +972,9 @@ async def link_material_start(query, context, user_id, product_code):
     keyboard = []
     for material in materials[:20]:
         callback = f"user_{user_id}_selmat_{material['code'][:15]}"
+        if len(callback.encode()) > 64:
+            mat_hash = hashlib.md5(material['code'].encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_selmat_{mat_hash}"
         keyboard.append([InlineKeyboardButton(
             f"{material['code']} - {material['name'][:30]}",
             callback_data=callback
@@ -1022,6 +1067,7 @@ async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     await link_quantity(update, context, text, 'material')
+
 # ==================== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ====================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1180,11 +1226,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_category_start(query, context, user_id)
         return
     
-    if action.startswith("cat_"):
+    if action.startswith("cat_") and not action.startswith("categories_"):
         category = action[4:]
+        # Проверяем, это выбор категории при создании или переход в категорию
         user_data = get_user_data(context, user_id)
-        user_data['current_category'] = category
-        await show_products(query, context, user_id, category, 1)
+        if user_data.get('new_item'):
+            # Это создание нового элемента
+            item_type = user_data['new_item'].get('type', 'изделие')
+            await select_category_callback(query, context, user_id, category, item_type)
+        else:
+            # Это просмотр категории
+            user_data['current_category'] = category
+            await show_products(query, context, user_id, category, 1)
         return
     
     # ===== ИЗДЕЛИЯ =====
@@ -1291,19 +1344,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await select_material_callback(query, context, user_id, code)
         return
     
-    # ===== ВЫБОР КАТЕГОРИИ ПРИ СОЗДАНИИ =====
-    if action.startswith("cat_") and not action.startswith("categories_"):
-        category = action[4:]
-        user_data = get_user_data(context, user_id)
-        item_type = user_data.get('new_item', {}).get('type', 'изделие')
-        await select_category_callback(query, context, user_id, category, item_type)
-        return
-    
-    if action == "cat_skip":
-        await select_category_callback(query, context, user_id, "skip", 
-                                      user_data.get('new_item', {}).get('type', 'изделие'))
-        return
-    
+    # ===== ВЫБОР КАТЕГОРИИ ПРИ СОЗДАНИИ МАТЕРИАЛА =====
     if action.startswith("matcat_"):
         category = action[7:]
         await select_material_category_callback(query, context, user_id, category)
@@ -1313,134 +1354,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await select_material_category_callback(query, context, user_id, "skip")
         return
     
+    # ===== ПРОПУСК КАТЕГОРИИ =====
+    if action == "cat_skip":
+        user_data = get_user_data(context, user_id)
+        item_type = user_data.get('new_item', {}).get('type', 'изделие')
+        await select_category_callback(query, context, user_id, "skip", item_type)
+        return
+    
     logger.warning(f"Неизвестный callback: {action}")
     await query.answer("❌ Неизвестная команда", show_alert=True)
-
-# ==================== ФАЙЛ states.py ====================
-
-"""
-Модуль для управления состояниями пользователей в боте
-"""
-
-from enum import Enum, auto
-from typing import Dict, Any, Optional
-from telegram.ext import ContextTypes
-
-class AdminStates(Enum):
-    """Состояния для административного бота"""
-    # Общие
-    MAIN_MENU = auto()
-    
-    # Категории
-    CATEGORY_LIST = auto()
-    CATEGORY_ADD_NAME = auto()
-    
-    # Изделия
-    PRODUCT_LIST = auto()
-    PRODUCT_ADD_NAME = auto()
-    PRODUCT_ADD_CATEGORY = auto()
-    PRODUCT_ADD_PRICE = auto()
-    PRODUCT_ADD_MULTIPLICITY = auto()
-    
-    # Узлы
-    NODE_LIST = auto()
-    NODE_ADD_NAME = auto()
-    NODE_ADD_CATEGORY = auto()
-    NODE_ADD_PRICE = auto()
-    
-    # Материалы
-    MATERIAL_LIST = auto()
-    MATERIAL_ADD_NAME = auto()
-    MATERIAL_ADD_CATEGORY = auto()
-    
-    # Привязки
-    PRODUCT_LINK_NODE_SELECT = auto()
-    PRODUCT_LINK_NODE_QUANTITY = auto()
-    PRODUCT_LINK_MATERIAL_SELECT = auto()
-    PRODUCT_LINK_MATERIAL_QUANTITY = auto()
-    
-    # Редактирование
-    EDIT_NAME = auto()
-    EDIT_CATEGORY = auto()
-    EDIT_PRICE = auto()
-    EDIT_MULTIPLICITY = auto()
-
-# Хранилище данных пользователей (в памяти)
-_user_data: Dict[int, Dict[str, Any]] = {}
-_user_states: Dict[int, AdminStates] = {}
-
-def get_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Dict[str, Any]:
-    """Получает данные пользователя"""
-    if user_id not in _user_data:
-        _user_data[user_id] = {}
-    return _user_data[user_id]
-
-def set_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int, data: Dict[str, Any]):
-    """Устанавливает данные пользователя"""
-    _user_data[user_id] = data
-
-def clear_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    """Очищает данные пользователя"""
-    if user_id in _user_data:
-        del _user_data[user_id]
-    if user_id in _user_states:
-        del _user_states[user_id]
-
-def get_user_state(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> Optional[AdminStates]:
-    """Получает состояние пользователя"""
-    return _user_states.get(user_id)
-
-def set_user_state(context: ContextTypes.DEFAULT_TYPE, user_id: int, state: AdminStates):
-    """Устанавливает состояние пользователя"""
-    _user_states[user_id] = state
-
-# ==================== ОБНОВЛЕННЫЙ main.py ====================
-
-"""
-Главный файл для запуска бота управления базой данных
-"""
-
-import logging
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-
-from config import TOKEN
-from excel_handler import ExcelHandler
-from handlers import (
-    start_command, button_handler, handle_message,
-    set_excel_handler
-)
-
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-def main():
-    """Запуск бота"""
-    # Путь к файлу Excel
-    excel_path = 'data/База для приложения.xlsx'
-    
-    # Создаем обработчик Excel
-    excel_handler = ExcelHandler(excel_path)
-    
-    # Передаем его в handlers
-    set_excel_handler(excel_handler)
-    
-    # Создаем приложение
-    app = Application.builder().token(TOKEN).build()
-    
-    # Добавляем обработчики
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    logger.info("✅ Бот управления базой данных запущен")
-    logger.info(f"📁 Файл Excel: {excel_path}")
-    
-    # Запускаем бота
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
