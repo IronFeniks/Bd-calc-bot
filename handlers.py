@@ -10,7 +10,8 @@ from keyboards import (
     materials_keyboard, nodes_keyboard, product_detail_keyboard,
     material_detail_keyboard, cancel_button, back_button,
     confirm_keyboard, edit_product_fields_keyboard,
-    edit_material_fields_keyboard, select_type_keyboard
+    edit_material_fields_keyboard, select_type_keyboard,
+    add_composition_keyboard, select_node_keyboard, select_material_keyboard
 )
 from excel_handler import ExcelHandler
 from states import AdminStates, get_user_data, set_user_state, get_user_state, clear_user_data
@@ -36,11 +37,14 @@ def extract_code_from_callback(data: str, prefix: str) -> str:
     code_part = parts[2].replace(prefix, '')
     
     # Пытаемся найти полный код в данных
-    for _, row in excel_handler.df_nomenclature.iterrows():
-        full_code = row['Код']
-        # Проверяем по началу или по хэшу
-        if full_code.startswith(code_part) or hashlib.md5(full_code.encode()).hexdigest()[:8] == code_part:
-            return full_code
+    try:
+        for _, row in excel_handler.df_nomenclature.iterrows():
+            full_code = row['Код']
+            # Проверяем по началу или по хэшу
+            if full_code.startswith(code_part) or hashlib.md5(full_code.encode()).hexdigest()[:8] == code_part:
+                return full_code
+    except:
+        pass
     
     return code_part
 
@@ -151,6 +155,7 @@ async def add_category_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     )
     
     clear_user_data(context, user_id)
+
 # ==================== ИЗДЕЛИЯ ====================
 
 async def show_products(query, context, user_id, category=None, page=1):
@@ -162,7 +167,7 @@ async def show_products(query, context, user_id, category=None, page=1):
     else:
         items, total_items = excel_handler.get_products_by_category(category, page-1, ITEMS_PER_PAGE)
         # Фильтруем только изделия
-        items = [i for i in items if i.get('type') == 'изделие']
+        items = [i for i in items if excel_handler.get_product_by_code(i['code'])['Тип'].lower() == 'изделие']
     
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     
@@ -429,7 +434,7 @@ async def add_product_multiplicity(update: Update, context: ContextTypes.DEFAULT
     await save_item(update, context, user_id, 'изделие')
 
 async def save_item(update_or_query, context, user_id, item_type: str):
-    """Сохранение нового изделия/узла"""
+    """Сохранение нового изделия/узла и переход к добавлению состава"""
     user_data = get_user_data(context, user_id)
     new_item = user_data.get('new_item', {})
     
@@ -448,21 +453,39 @@ async def save_item(update_or_query, context, user_id, item_type: str):
         
         response_text = f"{message}\n\n"
         if save_success:
-            response_text += "✅ Изменения сохранены в файл"
+            response_text += "✅ Изменения сохранены в файл\n\n"
         else:
-            response_text += f"❌ Ошибка сохранения: {save_message}"
+            response_text += f"❌ Ошибка сохранения: {save_message}\n\n"
         
-        # Отправляем ответ
-        if hasattr(update_or_query, 'message'):
-            await update_or_query.message.reply_text(
-                response_text,
-                reply_markup=back_button(user_id, "products" if item_type == 'изделие' else "nodes")
-            )
+        # Если это изделие, предлагаем добавить состав
+        if item_type == 'изделие':
+            response_text += "Теперь вы можете добавить состав изделия:"
+            
+            # Создаем клавиатуру для добавления состава
+            keyboard = add_composition_keyboard(user_id, code)
+            
+            if hasattr(update_or_query, 'message'):
+                await update_or_query.message.reply_text(
+                    response_text,
+                    reply_markup=keyboard
+                )
+            else:
+                await update_or_query.edit_message_text(
+                    response_text,
+                    reply_markup=keyboard
+                )
         else:
-            await update_or_query.edit_message_text(
-                response_text,
-                reply_markup=back_button(user_id, "products" if item_type == 'изделие' else "nodes")
-            )
+            # Для узлов просто возвращаемся к списку
+            if hasattr(update_or_query, 'message'):
+                await update_or_query.message.reply_text(
+                    response_text,
+                    reply_markup=back_button(user_id, "nodes")
+                )
+            else:
+                await update_or_query.edit_message_text(
+                    response_text,
+                    reply_markup=back_button(user_id, "nodes")
+                )
     else:
         if hasattr(update_or_query, 'message'):
             await update_or_query.message.reply_text(
@@ -475,7 +498,9 @@ async def save_item(update_or_query, context, user_id, item_type: str):
                 reply_markup=cancel_button(user_id)
             )
     
-    clear_user_data(context, user_id)
+    # Не очищаем данные полностью, но очищаем временные
+    if 'new_item' in user_data:
+        del user_data['new_item']
 
 # ==================== МАТЕРИАЛЫ ====================
 
@@ -919,7 +944,7 @@ async def link_node_start(query, context, user_id, product_code):
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_SELECT)
     
     # Получаем список всех узлов
-    nodes, _ = excel_handler.get_products_by_type('узел', 0, 1000)
+    nodes, total = excel_handler.get_products_by_type('узел', 0, 1000)
     
     if not nodes:
         await query.edit_message_text(
@@ -928,26 +953,13 @@ async def link_node_start(query, context, user_id, product_code):
         )
         return
     
-    keyboard = []
-    for node in nodes[:20]:  # Ограничиваем 20 для избежания длинного сообщения
-        callback = f"user_{user_id}_selnode_{node['code'][:15]}"
-        if len(callback.encode()) > 64:
-            node_hash = hashlib.md5(node['code'].encode()).hexdigest()[:8]
-            callback = f"user_{user_id}_selnode_{node_hash}"
-        keyboard.append([InlineKeyboardButton(
-            f"{node['code']} - {node['name'][:30]}",
-            callback_data=callback
-        )])
-    
-    if len(nodes) > 20:
-        keyboard.append([InlineKeyboardButton("➡️ Далее", callback_data=f"user_{user_id}_nodes_page_2")])
-    
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
+    # Показываем первую страницу
+    page = 1
+    total_pages = (total + 9) // 10
     
     await query.edit_message_text(
-        "🔗 Привязка узла к изделию\n\n"
-        "Выберите узел из списка:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        f"🔗 Выберите узел для привязки к изделию\nСтраница {page} из {total_pages}:",
+        reply_markup=select_node_keyboard(nodes[:10], user_id, page, total_pages, full_code)
     )
 
 async def link_material_start(query, context, user_id, product_code):
@@ -959,7 +971,7 @@ async def link_material_start(query, context, user_id, product_code):
     set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_SELECT)
     
     # Получаем список всех материалов
-    materials, _ = excel_handler.get_products_by_type('материал', 0, 1000)
+    materials, total = excel_handler.get_products_by_type('материал', 0, 1000)
     
     if not materials:
         await query.edit_message_text(
@@ -968,53 +980,54 @@ async def link_material_start(query, context, user_id, product_code):
         )
         return
     
-    keyboard = []
-    for material in materials[:20]:
-        callback = f"user_{user_id}_selmat_{material['code'][:15]}"
-        if len(callback.encode()) > 64:
-            mat_hash = hashlib.md5(material['code'].encode()).hexdigest()[:8]
-            callback = f"user_{user_id}_selmat_{mat_hash}"
-        keyboard.append([InlineKeyboardButton(
-            f"{material['code']} - {material['name'][:30]}",
-            callback_data=callback
-        )])
-    
-    if len(materials) > 20:
-        keyboard.append([InlineKeyboardButton("➡️ Далее", callback_data=f"user_{user_id}_materials_page_2")])
-    
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
+    # Показываем первую страницу
+    page = 1
+    total_pages = (total + 9) // 10
     
     await query.edit_message_text(
-        "⚙️ Привязка материала\n\n"
-        "Выберите материал из списка:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        f"⚙️ Выберите материал для привязки\nСтраница {page} из {total_pages}:",
+        reply_markup=select_material_keyboard(materials[:10], user_id, page, total_pages, full_code)
     )
 
-async def select_node_callback(query, context, user_id, node_code):
+async def select_node_callback(query, context, user_id, data):
     """Выбор узла для привязки"""
-    full_code = extract_code_from_callback(node_code, "selnode_")
-    
-    user_data = get_user_data(context, user_id)
-    user_data['link_child'] = full_code
-    set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
-    
-    await query.edit_message_text(
-        "✏️ Введите количество узлов (шт):",
-        reply_markup=cancel_button(user_id)
-    )
+    # data имеет формат parent_code_node_code
+    parts = data.split('_')
+    if len(parts) >= 2:
+        parent_code = parts[0]
+        node_code = '_'.join(parts[1:])
+        
+        user_data = get_user_data(context, user_id)
+        user_data['link_parent'] = parent_code
+        user_data['link_child'] = node_code
+        set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
+        
+        await query.edit_message_text(
+            "✏️ Введите количество узлов (шт):",
+            reply_markup=cancel_button(user_id)
+        )
+    else:
+        await query.edit_message_text("❌ Ошибка выбора узла")
 
-async def select_material_callback(query, context, user_id, material_code):
+async def select_material_callback(query, context, user_id, data):
     """Выбор материала для привязки"""
-    full_code = extract_code_from_callback(material_code, "selmat_")
-    
-    user_data = get_user_data(context, user_id)
-    user_data['link_child'] = full_code
-    set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
-    
-    await query.edit_message_text(
-        "✏️ Введите количество материала (шт):",
-        reply_markup=cancel_button(user_id)
-    )
+    # data имеет формат parent_code_material_code
+    parts = data.split('_')
+    if len(parts) >= 2:
+        parent_code = parts[0]
+        material_code = '_'.join(parts[1:])
+        
+        user_data = get_user_data(context, user_id)
+        user_data['link_parent'] = parent_code
+        user_data['link_child'] = material_code
+        set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
+        
+        await query.edit_message_text(
+            "✏️ Введите количество материала (шт):",
+            reply_markup=cancel_button(user_id)
+        )
+    else:
+        await query.edit_message_text("❌ Ошибка выбора материала")
 
 async def link_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, link_type: str):
     """Сохранение количества при привязке"""
@@ -1051,7 +1064,7 @@ async def link_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         
         await update.message.reply_text(
             response_text,
-            reply_markup=back_button(user_id, f"product_{parent_code}")
+            reply_markup=add_composition_keyboard(user_id, parent_code)
         )
     else:
         await update.message.reply_text(
@@ -1333,14 +1346,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await link_material_start(query, context, user_id, code)
         return
     
-    if action.startswith("selnode_"):
-        code = action.replace("selnode_", "")
-        await select_node_callback(query, context, user_id, code)
+    if action.startswith("selnode_for_"):
+        data = action.replace("selnode_for_", "")
+        await select_node_callback(query, context, user_id, data)
         return
     
-    if action.startswith("selmat_"):
-        code = action.replace("selmat_", "")
-        await select_material_callback(query, context, user_id, code)
+    if action.startswith("selmat_for_"):
+        data = action.replace("selmat_for_", "")
+        await select_material_callback(query, context, user_id, data)
+        return
+    
+    # ===== СОЗДАНИЕ НОВЫХ ЭЛЕМЕНТОВ ДЛЯ СОСТАВА =====
+    if action.startswith("add_node_for_"):
+        code = action.replace("add_node_for_", "")
+        user_data = get_user_data(context, user_id)
+        user_data['parent_for_composition'] = code
+        await add_node_start(query, context, user_id)
+        return
+    
+    if action.startswith("add_material_for_"):
+        code = action.replace("add_material_for_", "")
+        user_data = get_user_data(context, user_id)
+        user_data['parent_for_composition'] = code
+        await add_material_start(query, context, user_id)
         return
     
     # ===== ВЫБОР КАТЕГОРИИ ПРИ СОЗДАНИИ МАТЕРИАЛА =====
