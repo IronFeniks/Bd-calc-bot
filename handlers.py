@@ -271,7 +271,11 @@ async def add_product_start(query, context, user_id):
 async def add_node_start(query, context, user_id):
     """Начало добавления узла"""
     user_data = get_user_data(context, user_id)
+    # Сохраняем parent_for_composition, если он есть
+    parent = user_data.get('parent_for_composition')
     user_data['new_item'] = {'type': 'узел'}
+    if parent:
+        user_data['new_item']['parent'] = parent
     set_user_state(context, user_id, AdminStates.NODE_ADD_NAME)
     
     await query.edit_message_text(
@@ -437,6 +441,7 @@ async def save_item(update_or_query, context, user_id, item_type: str):
     """Сохранение нового изделия/узла и переход к добавлению состава"""
     user_data = get_user_data(context, user_id)
     new_item = user_data.get('new_item', {})
+    parent_code = user_data.get('parent_for_composition')  # Для случаев, когда создаем через состав
     
     # Добавляем в базу
     success, message, code = excel_handler.add_product(
@@ -457,11 +462,40 @@ async def save_item(update_or_query, context, user_id, item_type: str):
         else:
             response_text += f"❌ Ошибка сохранения: {save_message}\n\n"
         
-        # Если это изделие, предлагаем добавить состав
+        # Проверяем, создавали ли мы этот элемент через меню добавления состава
+        if parent_code:
+            # Запоминаем, что нужно привязать к родителю
+            user_data['pending_link'] = {
+                'parent': parent_code,
+                'child': code,
+                'child_type': item_type
+            }
+            
+            # Запрашиваем количество
+            if hasattr(update_or_query, 'message'):
+                await update_or_query.message.reply_text(
+                    f"{response_text}\n"
+                    f"🔗 Элемент создан. Введите количество {item_type}ов (шт) для привязки к изделию:",
+                    reply_markup=cancel_button(user_id)
+                )
+            else:
+                await update_or_query.edit_message_text(
+                    f"{response_text}\n"
+                    f"🔗 Элемент создан. Введите количество {item_type}ов (шт) для привязки к изделию:",
+                    reply_markup=cancel_button(user_id)
+                )
+            
+            # Устанавливаем соответствующее состояние
+            if item_type == 'узел':
+                set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
+            else:  # материал
+                set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
+            
+            return
+        
+        # Если это изделие (не через состав), предлагаем добавить состав
         if item_type == 'изделие':
             response_text += "Теперь вы можете добавить состав изделия:"
-            
-            # Создаем клавиатуру для добавления состава
             keyboard = add_composition_keyboard(user_id, code)
             
             if hasattr(update_or_query, 'message'):
@@ -475,7 +509,7 @@ async def save_item(update_or_query, context, user_id, item_type: str):
                     reply_markup=keyboard
                 )
         else:
-            # Для узлов просто возвращаемся к списку
+            # Для узлов (созданных не через состав) просто возвращаемся к списку
             if hasattr(update_or_query, 'message'):
                 await update_or_query.message.reply_text(
                     response_text,
@@ -562,7 +596,11 @@ async def show_material_detail(query, context, user_id, material_code):
 async def add_material_start(query, context, user_id):
     """Начало добавления материала"""
     user_data = get_user_data(context, user_id)
+    # Сохраняем parent_for_composition, если он есть
+    parent = user_data.get('parent_for_composition')
     user_data['new_material'] = {}
+    if parent:
+        user_data['new_material']['parent'] = parent
     set_user_state(context, user_id, AdminStates.MATERIAL_ADD_NAME)
     
     await query.edit_message_text(
@@ -621,6 +659,7 @@ async def save_material(update_or_query, context, user_id, category):
     """Сохранение нового материала"""
     user_data = get_user_data(context, user_id)
     new_material = user_data.get('new_material', {})
+    parent_code = user_data.get('parent_for_composition')  # Для случаев, когда создаем через состав
     
     if category != "skip":
         # Восстанавливаем полное название категории
@@ -646,10 +685,38 @@ async def save_material(update_or_query, context, user_id, category):
         
         response_text = f"{message}\n\n"
         if save_success:
-            response_text += "✅ Изменения сохранены в файл"
+            response_text += "✅ Изменения сохранены в файл\n\n"
         else:
-            response_text += f"❌ Ошибка сохранения: {save_message}"
+            response_text += f"❌ Ошибка сохранения: {save_message}\n\n"
         
+        # Проверяем, создавали ли мы этот материал через меню добавления состава
+        if parent_code:
+            # Запоминаем, что нужно привязать к родителю
+            user_data['pending_link'] = {
+                'parent': parent_code,
+                'child': code,
+                'child_type': 'материал'
+            }
+            
+            # Запрашиваем количество
+            if hasattr(update_or_query, 'message'):
+                await update_or_query.message.reply_text(
+                    f"{response_text}\n"
+                    f"🔗 Материал создан. Введите количество (шт) для привязки к изделию:",
+                    reply_markup=cancel_button(user_id)
+                )
+            else:
+                await update_or_query.edit_message_text(
+                    f"{response_text}\n"
+                    f"🔗 Материал создан. Введите количество (шт) для привязки к изделию:",
+                    reply_markup=cancel_button(user_id)
+                )
+            
+            # Устанавливаем состояние для ввода количества
+            set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
+            return
+        
+        # Если создавали не через состав
         if hasattr(update_or_query, 'message'):
             await update_or_query.message.reply_text(
                 response_text,
@@ -1045,13 +1112,31 @@ async def link_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         )
         return
     
-    parent_code = user_data.get('link_parent')
-    child_code = user_data.get('link_child')
+    # Проверяем, есть ли ожидающая привязка
+    pending_link = user_data.get('pending_link')
     
-    if link_type == 'node':
-        success, message = excel_handler.link_node_to_product(parent_code, child_code, quantity)
+    if pending_link:
+        # Это автоматическая привязка после создания
+        parent_code = pending_link['parent']
+        child_code = pending_link['child']
+        child_type = pending_link['child_type']
+        
+        if child_type == 'узел' or link_type == 'node':
+            success, message = excel_handler.link_node_to_product(parent_code, child_code, quantity)
+        else:
+            success, message = excel_handler.link_material_to_product(parent_code, child_code, quantity)
+        
+        # Очищаем pending_link
+        del user_data['pending_link']
     else:
-        success, message = excel_handler.link_material_to_product(parent_code, child_code, quantity)
+        # Обычная привязка существующего
+        parent_code = user_data.get('link_parent')
+        child_code = user_data.get('link_child')
+        
+        if link_type == 'node':
+            success, message = excel_handler.link_node_to_product(parent_code, child_code, quantity)
+        else:
+            success, message = excel_handler.link_material_to_product(parent_code, child_code, quantity)
     
     if success:
         save_success, save_message = excel_handler.save_data()
@@ -1062,6 +1147,7 @@ async def link_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         else:
             response_text += f"❌ Ошибка сохранения: {save_message}"
         
+        # Возвращаемся к меню добавления состава
         await update.message.reply_text(
             response_text,
             reply_markup=add_composition_keyboard(user_id, parent_code)
@@ -1361,6 +1447,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = action.replace("add_node_for_", "")
         user_data = get_user_data(context, user_id)
         user_data['parent_for_composition'] = code
+        # Очищаем данные нового элемента, если были
+        if 'new_item' in user_data:
+            del user_data['new_item']
         await add_node_start(query, context, user_id)
         return
     
@@ -1368,6 +1457,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = action.replace("add_material_for_", "")
         user_data = get_user_data(context, user_id)
         user_data['parent_for_composition'] = code
+        # Очищаем данные нового материала, если были
+        if 'new_material' in user_data:
+            del user_data['new_material']
         await add_material_start(query, context, user_id)
         return
     
