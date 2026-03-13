@@ -34,9 +34,10 @@ def back_button(user_id, to):
 
 def confirm_keyboard(user_id, action, item_code):
     """Клавиатура подтверждения действия"""
+    code_short = item_code[:15] if item_code else ""
     keyboard = [
         [
-            InlineKeyboardButton("✅ Да, подтверждаю", callback_data=make_callback(user_id, f"confirm_{action}", item_code)),
+            InlineKeyboardButton("✅ Да, подтверждаю", callback_data=make_callback(user_id, f"confirm_{action}", code_short)),
             InlineKeyboardButton("❌ Нет, отмена", callback_data=make_callback(user_id, "cancel"))
         ]
     ]
@@ -44,11 +45,12 @@ def confirm_keyboard(user_id, action, item_code):
 
 def edit_field_keyboard(user_id, item_code, fields):
     """Клавиатура выбора поля для редактирования"""
+    code_short = item_code[:15] if item_code else ""
     keyboard = []
     for field_name, field_action in fields:
         keyboard.append([InlineKeyboardButton(
             field_name, 
-            callback_data=make_callback(user_id, f"edit_field_{field_action}", item_code)
+            callback_data=make_callback(user_id, f"edit_field_{field_action}", code_short)
         )])
     
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))])
@@ -229,21 +231,41 @@ def material_detail_keyboard(user_id, material_code):
 
 def edit_product_fields_keyboard(user_id, product_code):
     """Выбор поля для редактирования изделия/узла"""
+    code_short = product_code[:15]
     fields = [
         ("📝 Название", "name"),
         ("📂 Категория", "category"),
         ("💰 Цена производства", "price"),
         ("🔢 Кратность", "multiplicity")
     ]
-    return edit_field_keyboard(user_id, product_code, fields)
+    
+    keyboard = []
+    for field_name, field_action in fields:
+        keyboard.append([InlineKeyboardButton(
+            field_name, 
+            callback_data=make_callback(user_id, f"edit_field_{field_action}", code_short)
+        )])
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))])
+    return InlineKeyboardMarkup(keyboard)
 
 def edit_material_fields_keyboard(user_id, material_code):
     """Выбор поля для редактирования материала"""
+    code_short = material_code[:15]
     fields = [
         ("📝 Название", "name"),
         ("📂 Категория", "category")
     ]
-    return edit_field_keyboard(user_id, material_code, fields)
+    
+    keyboard = []
+    for field_name, field_action in fields:
+        keyboard.append([InlineKeyboardButton(
+            field_name, 
+            callback_data=make_callback(user_id, f"edit_field_{field_action}", code_short)
+        )])
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))])
+    return InlineKeyboardMarkup(keyboard)
 
 # ==================== КЛАВИАТУРА ДЛЯ ВЫБОРА ТИПА ====================
 
@@ -255,4 +277,74 @@ def select_type_keyboard(user_id):
         [InlineKeyboardButton("⚙️ Материал", callback_data=make_callback(user_id, "select_type_material"))],
         [InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ==================== КЛАВИАТУРА ДЛЯ ДОБАВЛЕНИЯ СОСТАВА ====================
+
+def add_composition_keyboard(user_id, product_code):
+    """Клавиатура для добавления состава изделия"""
+    code_short = product_code[:15]
+    keyboard = [
+        [InlineKeyboardButton("🔗 Добавить существующий узел", callback_data=make_callback(user_id, "link_node", code_short))],
+        [InlineKeyboardButton("⚙️ Добавить существующий материал", callback_data=make_callback(user_id, "link_material", code_short))],
+        [InlineKeyboardButton("➕ Создать новый узел", callback_data=make_callback(user_id, "add_node_for", code_short))],
+        [InlineKeyboardButton("➕ Создать новый материал", callback_data=make_callback(user_id, "add_material_for", code_short))],
+        [InlineKeyboardButton("✅ Завершить", callback_data=make_callback(user_id, "product", code_short))]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ==================== КЛАВИАТУРА ДЛЯ ВЫБОРА УЗЛОВ/МАТЕРИАЛОВ ====================
+
+def select_node_keyboard(nodes, user_id, page=1, total_pages=1, parent_code=None):
+    """Клавиатура для выбора узла из списка"""
+    keyboard = []
+    parent_short = parent_code[:15] if parent_code else ""
+    
+    for node in nodes[:10]:  # Показываем по 10 на странице
+        code_short = node['code'][:15]
+        name = node['name'][:30] + "..." if len(node['name']) > 30 else node['name']
+        callback = make_callback(user_id, "selnode_for", f"{parent_short}_{code_short}")
+        keyboard.append([InlineKeyboardButton(
+            f"{node['code']} - {name}",
+            callback_data=callback
+        )])
+    
+    # Навигация
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=make_callback(user_id, "nodes_page", str(page-1))))
+    nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=make_callback(user_id, "nodes_page", str(page+1))))
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))])
+    return InlineKeyboardMarkup(keyboard)
+
+def select_material_keyboard(materials, user_id, page=1, total_pages=1, parent_code=None):
+    """Клавиатура для выбора материала из списка"""
+    keyboard = []
+    parent_short = parent_code[:15] if parent_code else ""
+    
+    for material in materials[:10]:
+        code_short = material['code'][:15]
+        name = material['name'][:30] + "..." if len(material['name']) > 30 else material['name']
+        callback = make_callback(user_id, "selmat_for", f"{parent_short}_{code_short}")
+        keyboard.append([InlineKeyboardButton(
+            f"{material['code']} - {name}",
+            callback_data=callback
+        )])
+    
+    # Навигация
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=make_callback(user_id, "materials_page", str(page-1))))
+    nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=make_callback(user_id, "materials_page", str(page+1))))
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=make_callback(user_id, "cancel"))])
     return InlineKeyboardMarkup(keyboard)
