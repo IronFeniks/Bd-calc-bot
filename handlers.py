@@ -1,6 +1,7 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import hashlib
 
 from config import ADMIN_IDS, ITEMS_PER_PAGE
 from keyboards import (
@@ -19,6 +20,16 @@ excel_handler = None
 def set_excel_handler(handler: ExcelHandler):
     global excel_handler
     excel_handler = handler
+
+# Вспомогательная функция для создания callback_data
+def make_callback(user_id, action, data):
+    """Создаёт callback_data с проверкой длины"""
+    base = f"user_{user_id}_{action}_{data}"
+    if len(base.encode()) <= 64:
+        return base
+    # Если длинно, берём хэш
+    data_hash = hashlib.md5(data.encode()).hexdigest()[:8]
+    return f"user_{user_id}_{action}_{data_hash}"
 
 # ==================== ПРОВЕРКА ДОСТУПА ====================
 
@@ -59,7 +70,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_user_data(context, user_id)
     set_user_state(context, user_id, AdminStates.MAIN_MENU)
     
-    # Проверяем наличие файла
     success, message = excel_handler.load_data()
     if not success:
         await update.message.reply_text(message)
@@ -291,8 +301,16 @@ async def add_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     
     keyboard = []
     for cat in categories:
-        keyboard.append([InlineKeyboardButton(cat, callback_data=f"user_{user_id}_select_cat_{cat}")])
-    keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_select_cat_skip")])
+        # Ограничиваем длину callback_data
+        cat_short = cat[:20]
+        callback = f"user_{user_id}_cat_{cat_short}"
+        # Проверяем длину (макс 64 байта)
+        if len(callback.encode()) > 64:
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_cat_{cat_hash}"
+        keyboard.append([InlineKeyboardButton(cat, callback_data=callback)])
+    
+    keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_cat_skip")])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
     await update.message.reply_text(
@@ -306,7 +324,19 @@ async def select_category_callback(query, context, user_id, category):
     if category == "skip":
         user_data['new_product']['category'] = ''
     else:
-        user_data['new_product']['category'] = category
+        # Пытаемся восстановить полное название категории
+        categories = excel_handler.get_unique_categories()
+        found = None
+        for cat in categories:
+            cat_short = cat[:20]
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            if cat_short == category or cat_hash == category:
+                found = cat
+                break
+        if found:
+            user_data['new_product']['category'] = found
+        else:
+            user_data['new_product']['category'] = category
     
     set_user_state(context, user_id, AdminStates.PRODUCT_ADD_PRICE)
     
@@ -486,8 +516,14 @@ async def add_material_name(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     keyboard = []
     for cat in categories:
-        keyboard.append([InlineKeyboardButton(cat, callback_data=f"user_{user_id}_select_matcat_{cat}")])
-    keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_select_matcat_skip")])
+        cat_short = cat[:20]
+        callback = f"user_{user_id}_matcat_{cat_short}"
+        if len(callback.encode()) > 64:
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_matcat_{cat_hash}"
+        keyboard.append([InlineKeyboardButton(cat, callback_data=callback)])
+    
+    keyboard.append([InlineKeyboardButton("⏭️ Пропустить", callback_data=f"user_{user_id}_matcat_skip")])
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
     set_user_state(context, user_id, AdminStates.MATERIAL_ADD_CATEGORY)
@@ -503,6 +539,15 @@ async def select_material_category_callback(query, context, user_id, category):
 async def save_material(update_or_query, context, user_id, category):
     user_data = get_user_data(context, user_id)
     new_material = user_data.get('new_material', {})
+    
+    if category != "skip":
+        categories = excel_handler.get_unique_categories()
+        for cat in categories:
+            cat_short = cat[:20]
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            if cat_short == category or cat_hash == category:
+                category = cat
+                break
     
     success, message = excel_handler.add_material(
         code=new_material['code'],
@@ -529,6 +574,7 @@ async def save_material(update_or_query, context, user_id, category):
         )
     
     clear_user_data(context, user_id)
+
 # ==================== ПРИВЯЗКА УЗЛОВ ====================
 
 async def link_node_start(query, context, user_id, product_code):
@@ -545,8 +591,13 @@ async def link_node_start(query, context, user_id, product_code):
     
     keyboard = []
     for _, row in nodes_df.iterrows():
-        text = f"{row['Код']} - {row['Наименование']}"
-        keyboard.append([InlineKeyboardButton(text, callback_data=f"user_{user_id}_select_node_{row['Код']}")])
+        node_code = row['Код']
+        node_name = row['Наименование']
+        callback = f"user_{user_id}_selnode_{node_code}"
+        if len(callback.encode()) > 64:
+            node_hash = hashlib.md5(node_code.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_selnode_{node_hash}"
+        keyboard.append([InlineKeyboardButton(f"{node_code} - {node_name}", callback_data=callback)])
     
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
@@ -558,13 +609,32 @@ async def link_node_start(query, context, user_id, product_code):
 
 async def select_node_callback(query, context, user_id, node_code):
     user_data = get_user_data(context, user_id)
-    user_data['link_node'] = node_code
-    set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
     
-    await query.edit_message_text(
-        "✏️ Введите количество узлов (шт):",
-        reply_markup=cancel_button(user_id)
-    )
+    # Восстанавливаем полный код узла
+    mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'узел'
+    nodes_df = excel_handler.df_nomenclature[mask]
+    
+    found = None
+    for _, row in nodes_df.iterrows():
+        full_code = row['Код']
+        if full_code == node_code:
+            found = full_code
+            break
+        # Проверяем по хэшу
+        code_hash = hashlib.md5(full_code.encode()).hexdigest()[:8]
+        if code_hash == node_code:
+            found = full_code
+            break
+    
+    if found:
+        user_data['link_node'] = found
+        set_user_state(context, user_id, AdminStates.PRODUCT_LINK_NODE_QUANTITY)
+        await query.edit_message_text(
+            "✏️ Введите количество узлов (шт):",
+            reply_markup=cancel_button(user_id)
+        )
+    else:
+        await query.edit_message_text("❌ Узел не найден")
 
 async def link_node_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     user_id = update.effective_user.id
@@ -622,8 +692,13 @@ async def link_material_start(query, context, user_id, parent_code):
     
     keyboard = []
     for _, row in materials_df.iterrows():
-        text = f"{row['Код']} - {row['Наименование']}"
-        keyboard.append([InlineKeyboardButton(text, callback_data=f"user_{user_id}_select_material_{row['Код']}")])
+        material_code = row['Код']
+        material_name = row['Наименование']
+        callback = f"user_{user_id}_selmat_{material_code}"
+        if len(callback.encode()) > 64:
+            mat_hash = hashlib.md5(material_code.encode()).hexdigest()[:8]
+            callback = f"user_{user_id}_selmat_{mat_hash}"
+        keyboard.append([InlineKeyboardButton(f"{material_code} - {material_name}", callback_data=callback)])
     
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}_cancel")])
     
@@ -635,13 +710,30 @@ async def link_material_start(query, context, user_id, parent_code):
 
 async def select_material_callback(query, context, user_id, material_code):
     user_data = get_user_data(context, user_id)
-    user_data['link_material'] = material_code
-    set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
     
-    await query.edit_message_text(
-        "✏️ Введите количество материала (шт):",
-        reply_markup=cancel_button(user_id)
-    )
+    mask = excel_handler.df_nomenclature['Тип'].str.lower() == 'материал'
+    materials_df = excel_handler.df_nomenclature[mask]
+    
+    found = None
+    for _, row in materials_df.iterrows():
+        full_code = row['Код']
+        if full_code == material_code:
+            found = full_code
+            break
+        code_hash = hashlib.md5(full_code.encode()).hexdigest()[:8]
+        if code_hash == material_code:
+            found = full_code
+            break
+    
+    if found:
+        user_data['link_material'] = found
+        set_user_state(context, user_id, AdminStates.PRODUCT_LINK_MATERIAL_QUANTITY)
+        await query.edit_message_text(
+            "✏️ Введите количество материала (шт):",
+            reply_markup=cancel_button(user_id)
+        )
+    else:
+        await query.edit_message_text("❌ Материал не найден")
 
 async def link_material_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     user_id = update.effective_user.id
@@ -773,6 +865,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_category_start(query, context, user_id)
         return
     
+    # ===== ОБРАБОТЧИК ВЫБОРА КАТЕГОРИИ =====
+    if action.startswith("cat_"):
+        category = action[4:]  # Убираем "cat_"
+        # Восстанавливаем полное название категории
+        categories = excel_handler.get_unique_categories()
+        found = None
+        for cat in categories:
+            cat_short = cat[:20]
+            cat_hash = hashlib.md5(cat.encode()).hexdigest()[:8]
+            if cat_short == category or cat_hash == category:
+                found = cat
+                break
+        if found:
+            user_data = get_user_data(context, user_id)
+            user_data['current_category'] = found
+            await show_products(query, context, user_id, found, 1)
+        else:
+            await query.edit_message_text("❌ Категория не найдена")
+        return
+    
     if action == "products":
         await show_products(query, context, user_id, "Все", 1)
         return
@@ -790,88 +902,3 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if action.startswith("product_"):
         product_code = action.replace("product_", "")
-        await show_product_detail(query, context, user_id, product_code)
-        return
-    
-    if action.startswith("link_node_"):
-        product_code = action.replace("link_node_", "")
-        await link_node_start(query, context, user_id, product_code)
-        return
-    
-    if action.startswith("link_material_"):
-        product_code = action.replace("link_material_", "")
-        await link_material_start(query, context, user_id, product_code)
-        return
-    
-    if action == "materials":
-        await show_materials(query, context, user_id, 1)
-        return
-    
-    if action.startswith("materials_page_"):
-        page = int(action.replace("materials_page_", ""))
-        await show_materials(query, context, user_id, page)
-        return
-    
-    if action == "add_material":
-        await add_material_start(query, context, user_id)
-        return
-    
-    if action.startswith("material_"):
-        material_code = action.replace("material_", "")
-        await show_material_detail(query, context, user_id, material_code)
-        return
-    
-    if action.startswith("select_cat_"):
-        category = action.replace("select_cat_", "")
-        await select_category_callback(query, context, user_id, category)
-        return
-    
-    if action.startswith("select_matcat_"):
-        category = action.replace("select_matcat_", "")
-        await select_material_category_callback(query, context, user_id, category)
-        return
-    
-    if action.startswith("select_node_"):
-        node_code = action.replace("select_node_", "")
-        await select_node_callback(query, context, user_id, node_code)
-        return
-    
-    if action.startswith("select_material_"):
-        material_code = action.replace("select_material_", "")
-        await select_material_callback(query, context, user_id, material_code)
-        return
-    
-    if action == "back_to_main":
-        await back_to_main(query, context, user_id)
-        return
-    
-    if action == "back_to_categories":
-        await show_categories(query, context, user_id, 1)
-        return
-    
-    if action == "back_to_products":
-        user_data = get_user_data(context, user_id)
-        category = user_data.get('current_category', "Все")
-        await show_products(query, context, user_id, category, 1)
-        return
-    
-    if action == "back_to_materials":
-        await show_materials(query, context, user_id, 1)
-        return
-    
-    if action.startswith("back_to_product_"):
-        product_code = action.replace("back_to_product_", "")
-        await show_product_detail(query, context, user_id, product_code)
-        return
-    
-    if action == "cancel":
-        clear_user_data(context, user_id)
-        set_user_state(context, user_id, AdminStates.MAIN_MENU)
-        await query.edit_message_text("❌ Действие отменено")
-        return
-    
-    if action == "noop":
-        return
-    
-    logger.warning(f"Неизвестное действие: {action}")
-    await query.edit_message_text("❌ Неизвестная команда")
