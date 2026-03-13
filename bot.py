@@ -27,6 +27,7 @@ from handlers import (
     set_excel_handler
 )
 from excel_handler import ExcelHandler
+from keyboards import main_menu_keyboard  # Добавлен импорт
 
 # ==================== НАСТРОЙКА ЛОГИРОВАНИЯ ====================
 logging.basicConfig(
@@ -55,15 +56,25 @@ async def post_init(application: Application):
     logger.info("⚙️ Выполняется post_init...")
     
     try:
-        excel_handler = ExcelHandler()
+        # !!! ИСПРАВЛЕНО: передаем путь к файлу !!!
+        excel_handler = ExcelHandler(EXCEL_FILE)
         set_excel_handler(excel_handler)
         logger.info("✅ Обработчик Excel инициализирован")
         
         # Проверяем наличие файла
         if os.path.exists(EXCEL_FILE):
             logger.info(f"✅ Файл {EXCEL_FILE} найден")
+            # Пробуем загрузить данные
+            success, message = excel_handler.load_data()
+            if success:
+                logger.info(f"✅ Данные загружены: {len(excel_handler.df_nomenclature)} записей")
+            else:
+                logger.warning(f"⚠️ Ошибка загрузки данных: {message}")
         else:
             logger.warning(f"⚠️ Файл {EXCEL_FILE} не найден")
+            # Создаем директорию data, если её нет
+            os.makedirs(DATA_DIR, exist_ok=True)
+            logger.info(f"✅ Создана директория {DATA_DIR}")
         
         await application.bot.set_my_commands([
             ("start", "🏠 Главное меню"),
@@ -146,6 +157,6 @@ data/База для приложения.xlsx
     """
     
     await update.message.reply_text(help_text)
-
+    
 if __name__ == '__main__':
     main()
