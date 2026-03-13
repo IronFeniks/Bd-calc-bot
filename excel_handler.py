@@ -56,6 +56,55 @@ class ExcelHandler:
             logger.error(f"Ошибка сохранения Excel: {e}")
             return False, f"❌ Ошибка сохранения: {e}"
     
+    # ==================== УПРАВЛЕНИЕ КАТЕГОРИЯМИ ====================
+    
+    def get_unique_categories(self) -> List[str]:
+        """Возвращает список уникальных категорий"""
+        categories = set()
+        
+        # Собираем категории из номенклатуры
+        for cat in self.df_nomenclature['Категории']:
+            if cat and str(cat).strip():
+                parts = str(cat).split(' > ')
+                for part in parts:
+                    if part.strip():
+                        categories.add(part.strip())
+        
+        # Добавляем категории из отдельного файла
+        try:
+            categories_file = os.path.join('data', 'categories.txt')
+            if os.path.exists(categories_file):
+                with open(categories_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        cat = line.strip()
+                        if cat:
+                            categories.add(cat)
+        except Exception as e:
+            logger.error(f"Ошибка чтения файла категорий: {e}")
+        
+        return sorted(list(categories))
+    
+    def add_category(self, category_name: str) -> Tuple[bool, str]:
+        """Добавляет новую категорию"""
+        try:
+            categories_file = os.path.join('data', 'categories.txt')
+            os.makedirs('data', exist_ok=True)
+            
+            # Проверяем, не существует ли уже
+            existing = self.get_unique_categories()
+            if category_name in existing:
+                return False, f"❌ Категория '{category_name}' уже существует"
+            
+            with open(categories_file, 'a', encoding='utf-8') as f:
+                f.write(f"{category_name}\n")
+            
+            logger.info(f"✅ Категория '{category_name}' добавлена")
+            return True, f"✅ Категория '{category_name}' добавлена"
+            
+        except Exception as e:
+            logger.error(f"Ошибка добавления категории: {e}")
+            return False, f"❌ Ошибка: {e}"
+    
     # ==================== АВТОМАТИЧЕСКАЯ ГЕНЕРАЦИЯ КОДОВ ====================
     
     def _extract_number(self, code: str, prefix: str) -> int:
@@ -101,7 +150,7 @@ class ExcelHandler:
         """Генерирует следующий код для материала"""
         return self._get_next_code('мат', 'материал')
     
-    # ==================== ДОБАВЛЕНИЕ (с авто-кодом) ====================
+    # ==================== ДОБАВЛЕНИЕ ====================
     
     def add_product(self, name: str, type_name: str, category: str = '', 
                    price: str = '0 ISK', multiplicity: int = 1) -> Tuple[bool, str, str]:
@@ -155,6 +204,53 @@ class ExcelHandler:
             logger.error(f"Ошибка добавления материала: {e}")
             return False, f"❌ Ошибка: {e}", ""
     
+    # ==================== ПОЛУЧЕНИЕ ДАННЫХ ====================
+    
+    def get_product_by_code(self, code: str) -> Optional[Dict]:
+        """Возвращает запись по коду"""
+        mask = self.df_nomenclature['Код'] == code
+        if mask.any():
+            return self.df_nomenclature[mask].iloc[0].to_dict()
+        return None
+    
+    def get_products_by_type(self, type_name: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
+        """Возвращает продукты определенного типа с пагинацией"""
+        mask = self.df_nomenclature['Тип'].str.lower() == type_name.lower()
+        filtered = self.df_nomenclature[mask]
+        
+        total = len(filtered)
+        start = page * per_page
+        end = min(start + per_page, total)
+        
+        items = []
+        for _, row in filtered.iloc[start:end].iterrows():
+            items.append({
+                'code': row['Код'],
+                'name': row['Наименование'],
+                'category': row.get('Категории', '')
+            })
+        
+        return items, total
+    
+    def get_products_by_category(self, category: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
+        """Возвращает продукты из категории с пагинацией"""
+        mask = self.df_nomenclature['Категории'].str.contains(category, na=False)
+        filtered = self.df_nomenclature[mask]
+        
+        total = len(filtered)
+        start = page * per_page
+        end = min(start + per_page, total)
+        
+        items = []
+        for _, row in filtered.iloc[start:end].iterrows():
+            items.append({
+                'code': row['Код'],
+                'name': row['Наименование'],
+                'category': row.get('Категории', '')
+            })
+        
+        return items, total
+    
     # ==================== РЕДАКТИРОВАНИЕ ====================
     
     def update_product_field(self, code: str, field: str, value) -> Tuple[bool, str]:
@@ -171,14 +267,7 @@ class ExcelHandler:
             logger.error(f"Ошибка обновления: {e}")
             return False, f"❌ Ошибка: {e}"
     
-    def get_product_by_code(self, code: str) -> Optional[Dict]:
-        """Возвращает запись по коду"""
-        mask = self.df_nomenclature['Код'] == code
-        if mask.any():
-            return self.df_nomenclature[mask].iloc[0].to_dict()
-        return None
-    
-    # ==================== УДАЛЕНИЕ С ПРОВЕРКОЙ ====================
+    # ==================== УДАЛЕНИЕ ====================
     
     def check_product_usage(self, code: str) -> Tuple[bool, List[str]]:
         """Проверяет, используется ли продукт в спецификациях"""
@@ -236,57 +325,7 @@ class ExcelHandler:
             logger.error(f"Ошибка удаления: {e}")
             return False, f"❌ Ошибка: {e}"
     
-    # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-    
-    def get_unique_categories(self) -> List[str]:
-        """Возвращает список уникальных категорий"""
-        categories = set()
-        for cat in self.df_nomenclature['Категории']:
-            if cat and str(cat).strip():
-                # Разделяем по " > " если там несколько уровней
-                parts = str(cat).split(' > ')
-                for part in parts:
-                    if part.strip():
-                        categories.add(part.strip())
-        return sorted(list(categories))
-    
-    def get_products_by_type(self, type_name: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
-        """Возвращает продукты определенного типа с пагинацией"""
-        mask = self.df_nomenclature['Тип'].str.lower() == type_name.lower()
-        filtered = self.df_nomenclature[mask]
-        
-        total = len(filtered)
-        start = page * per_page
-        end = min(start + per_page, total)
-        
-        items = []
-        for _, row in filtered.iloc[start:end].iterrows():
-            items.append({
-                'code': row['Код'],
-                'name': row['Наименование'],
-                'category': row.get('Категории', '')
-            })
-        
-        return items, total
-    
-    def get_products_by_category(self, category: str, page: int = 0, per_page: int = 10) -> Tuple[List[Dict], int]:
-        """Возвращает продукты из категории с пагинацией"""
-        mask = self.df_nomenclature['Категории'].str.contains(category, na=False)
-        filtered = self.df_nomenclature[mask]
-        
-        total = len(filtered)
-        start = page * per_page
-        end = min(start + per_page, total)
-        
-        items = []
-        for _, row in filtered.iloc[start:end].iterrows():
-            items.append({
-                'code': row['Код'],
-                'name': row['Наименование'],
-                'category': row.get('Категории', '')
-            })
-        
-        return items, total
+    # ==================== ПРИВЯЗКИ ====================
     
     def link_node_to_product(self, parent_code: str, node_code: str, quantity: int) -> Tuple[bool, str]:
         """Привязывает узел к изделию"""
